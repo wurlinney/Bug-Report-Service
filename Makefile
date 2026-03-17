@@ -1,4 +1,4 @@
-.PHONY: test build fmt tidy lint docker-up docker-down
+.PHONY: test build fmt tidy lint docker-up docker-down swagger
 
 test:
 	go test -count=1 ./...
@@ -20,4 +20,7 @@ docker-up:
 
 docker-down:
 	docker compose -f deployments/docker-compose.yml down -v
+
+swagger:
+	docker compose -f deployments/docker-compose.yml up -d swagger-ui
 
