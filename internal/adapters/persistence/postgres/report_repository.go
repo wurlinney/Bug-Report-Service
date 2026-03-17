@@ -85,13 +85,8 @@ func (r *ReportRepository) list(ctx context.Context, f ports.ReportListFilter) (
 	where, args := buildReportWhere(f)
 
 	sortCol := "created_at"
-	switch f.SortBy {
-	case "updated_at":
+	if f.SortBy == "updated_at" {
 		sortCol = "updated_at"
-	case "created_at", "":
-		sortCol = "created_at"
-	default:
-		sortCol = "created_at"
 	}
 	dir := "ASC"
 	if f.SortDesc {
