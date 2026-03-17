@@ -575,9 +575,10 @@ components:
 
     AuthRequest:
       type: object
-      required: [email, password]
+      required: [email, name, password]
       properties:
         email: { type: string, format: email }
+        name: { type: string, minLength: 1 }
         password: { type: string, minLength: 8 }
 
     RefreshRequest:
@@ -599,6 +600,7 @@ components:
       properties:
         id: { type: string }
         email: { type: string }
+        name: { type: string }
         role: { type: string }
         created_at: { type: integer, format: int64 }
         updated_at: { type: integer, format: int64 }
@@ -615,6 +617,7 @@ components:
       properties:
         id: { type: string }
         user_id: { type: string }
+        user_name: { type: string }
         title: { type: string }
         description: { type: string }
         status: { type: string }
