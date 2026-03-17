@@ -57,7 +57,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AuthRequest"
+              $ref: "#/components/schemas/RegisterRequest"
       responses:
         "201":
           description: Registered
@@ -82,7 +82,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AuthRequest"
+              $ref: "#/components/schemas/LoginRequest"
       responses:
         "200":
           description: Logged in
@@ -573,12 +573,19 @@ components:
           additionalProperties: { type: boolean }
         state: { type: string }
 
-    AuthRequest:
+    RegisterRequest:
       type: object
       required: [email, name, password]
       properties:
         email: { type: string, format: email }
         name: { type: string, minLength: 1 }
+        password: { type: string, minLength: 8 }
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
         password: { type: string, minLength: 8 }
 
     RefreshRequest:
