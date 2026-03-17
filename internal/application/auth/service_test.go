@@ -258,3 +258,37 @@ func TestService_Refresh_PreservesRole(t *testing.T) {
 		t.Fatalf("expected moderator role in access token, got %q", ref.AccessToken)
 	}
 }
+
+func TestService_Refresh_WrongSecretRevokesToken(t *testing.T) {
+	users := &memUsers{byEmail: map[string]ports.UserRecord{}, byID: map[string]ports.UserRecord{}}
+	refresh := &memRefresh{byTokenID: map[string]ports.RefreshTokenRecord{}}
+	clk := fakeClock{t: time.Unix(1_700_000_000, 0).UTC()}
+
+	s := NewService(Deps{
+		Users:         users,
+		RefreshTokens: refresh,
+		Hasher:        fakeHasher{},
+		JWT:           fakeJWT{},
+		Random:        fakeRandom{},
+		Clock:         clk,
+		RefreshTTL:    30 * 24 * time.Hour,
+	})
+
+	issued, err := s.issueTokens(context.Background(), "u1", "user")
+	if err != nil {
+		t.Fatalf("issueTokens error: %v", err)
+	}
+
+	_, err = s.Refresh(context.Background(), RefreshRequest{
+		RefreshTokenID: issued.RefreshTokenID,
+		RefreshToken:   "wrong-secret",
+	})
+	if !errors.Is(err, ErrInvalidRefreshToken) {
+		t.Fatalf("expected ErrInvalidRefreshToken, got %v", err)
+	}
+
+	rt, found, _ := refresh.GetActiveByID(context.Background(), issued.RefreshTokenID)
+	if found {
+		t.Fatalf("expected token to be revoked (not active), got %+v", rt)
+	}
+}

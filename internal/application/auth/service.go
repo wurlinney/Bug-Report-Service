@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"bug-report-service/internal/application/ports"
+
+	"crypto/subtle"
 )
 
 var (
@@ -113,7 +115,9 @@ func (s *Service) Refresh(ctx context.Context, req RefreshRequest) (AuthResponse
 		return AuthResponse{}, ErrInvalidRefreshToken
 	}
 
-	if hashRefresh(req.RefreshToken) != rt.TokenHash {
+	provided := hashRefresh(req.RefreshToken)
+	if subtle.ConstantTimeCompare([]byte(provided), []byte(rt.TokenHash)) != 1 {
+		_ = s.deps.RefreshTokens.Revoke(ctx, rt.ID, now)
 		return AuthResponse{}, ErrInvalidRefreshToken
 	}
 
