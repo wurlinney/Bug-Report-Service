@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"bug-report-service/internal/application/attachment"
@@ -21,7 +22,7 @@ func listReportAttachmentsHandler(deps Deps) http.HandlerFunc {
 			return
 		}
 
-		reportID := chi.URLParam(r, "id")
+		reportID := strings.TrimSpace(chi.URLParam(r, "id"))
 		items, err := deps.AttachmentService.ListForReport(r.Context(), attachment.ListForReportRequest{
 			ActorRole: p.Role,
 			ActorID:   p.UserID,

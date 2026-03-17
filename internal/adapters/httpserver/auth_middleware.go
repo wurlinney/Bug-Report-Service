@@ -12,14 +12,14 @@ func AuthMiddleware(verifier TokenVerifier) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authz := r.Header.Get("Authorization")
-			token := strings.TrimSpace(strings.TrimPrefix(authz, "Bearer"))
-			if token == "" || verifier == nil {
-				writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+			token := strings.TrimPrefix(authz, "Bearer ")
+			if token == "" || token == authz || verifier == nil {
+				writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid token")
 				return
 			}
 			p, err := verifier.VerifyAccessToken(token)
 			if err != nil || p.UserID == "" || p.Role == "" {
-				writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+				writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid token")
 				return
 			}
 			ctx := context.WithValue(r.Context(), principalKey{}, p)

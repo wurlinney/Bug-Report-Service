@@ -11,6 +11,7 @@ import (
 
 	"bug-report-service/internal/application/attachment"
 	"bug-report-service/internal/application/auth"
+	"bug-report-service/internal/application/message"
 	"bug-report-service/internal/application/ports"
 	"bug-report-service/internal/application/report"
 	appuser "bug-report-service/internal/application/user"
@@ -150,6 +151,20 @@ func (m *memAttachments) ListByReport(_ context.Context, reportID string) ([]por
 	return append([]ports.AttachmentRecord(nil), m.byReportID[reportID]...), nil
 }
 
+type memMessages struct {
+	byReportID map[string][]ports.MessageRecord
+}
+
+func (m *memMessages) Create(_ context.Context, msg ports.MessageRecord) error {
+	m.byReportID[msg.ReportID] = append(m.byReportID[msg.ReportID], msg)
+	return nil
+}
+
+func (m *memMessages) ListByReport(_ context.Context, reportID string, f ports.MessageListFilter) ([]ports.MessageRecord, int, error) {
+	items := append([]ports.MessageRecord(nil), m.byReportID[reportID]...)
+	return ports.ApplyMessageListFilter(items, f)
+}
+
 type fakeReportRandom struct{}
 
 func (r fakeReportRandom) NewID() string             { return "r-1" }
@@ -187,8 +202,8 @@ func TestAPI_RegisterThenMe(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
 	}
 
 	var reg struct {
@@ -256,8 +271,8 @@ func TestAPI_CreateReport(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
 	}
 	var reg struct {
 		AccessToken string `json:"access_token"`
@@ -274,8 +289,8 @@ func TestAPI_CreateReport(t *testing.T) {
 	req2.Header.Set("Authorization", "Bearer "+reg.AccessToken)
 	rr2 := httptest.NewRecorder()
 	h.ServeHTTP(rr2, req2)
-	if rr2.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rr2.Code, rr2.Body.String())
+	if rr2.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr2.Code, rr2.Body.String())
 	}
 	var created struct {
 		ID     string `json:"id"`
@@ -331,8 +346,8 @@ func TestAPI_ListMyReports(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
 	}
 	var reg struct {
 		AccessToken string `json:"access_token"`
@@ -393,8 +408,8 @@ func TestAPI_GetMyReport(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
 	}
 	var reg struct {
 		AccessToken string `json:"access_token"`
@@ -473,8 +488,8 @@ func TestAPI_ListReportAttachments(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
 	}
 	var reg struct {
 		AccessToken string `json:"access_token"`
@@ -496,6 +511,80 @@ func TestAPI_ListReportAttachments(t *testing.T) {
 	}
 	_ = json.Unmarshal(rr2.Body.Bytes(), &resp)
 	if len(resp.Items) != 1 || resp.Items[0].ID != "a1" || resp.Items[0].DownloadURL == "" {
+		t.Fatalf("unexpected resp: %+v", resp)
+	}
+}
+
+func TestAPI_CreateAndListMessages(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	users := &memUsers{byEmail: map[string]ports.UserRecord{}, byID: map[string]ports.UserRecord{}}
+	refresh := &memRefresh{byTokenID: map[string]ports.RefreshTokenRecord{}}
+	authSvc := auth.NewService(auth.Deps{
+		Users:         users,
+		RefreshTokens: refresh,
+		Hasher:        fakeHasher{},
+		JWT:           fakeJWT{},
+		Random:        fakeRandom{},
+		Clock:         fakeClock{t: now},
+		RefreshTTL:    30 * 24 * time.Hour,
+	})
+
+	reportsRepo := &memReports{byID: map[string]ports.ReportRecord{}}
+	_ = reportsRepo.Create(context.Background(), ports.ReportRecord{ID: "r1", UserID: "id-1", Title: "t", Description: "d", Status: "new", CreatedAt: now, UpdatedAt: now})
+
+	msgRepo := &memMessages{byReportID: map[string][]ports.MessageRecord{}}
+	msgSvc := message.NewService(message.Deps{Reports: reportsRepo, Messages: msgRepo, Clock: fakeClock{t: now}, Random: fakeReportRandom{}})
+
+	h := NewAPI(Deps{
+		Ready:          NewReadiness(),
+		AuthService:    authSvc,
+		UserService:    appuser.NewService(users),
+		ReportService:  report.NewService(report.Deps{Reports: reportsRepo, Clock: fakeClock{t: now}, Random: fakeReportRandom{}}),
+		MessageService: msgSvc,
+		TokenVerifier:  fakeVerifier{},
+	})
+
+	// register to get access token
+	body, _ := json.Marshal(map[string]any{"email": "a@example.com", "password": "P@ssw0rd!"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var reg struct {
+		AccessToken string `json:"access_token"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &reg)
+
+	// create message
+	body2, _ := json.Marshal(map[string]any{"text": "hello"})
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/reports/r1/messages", bytes.NewReader(body2))
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("Authorization", "Bearer "+reg.AccessToken)
+	rr2 := httptest.NewRecorder()
+	h.ServeHTTP(rr2, req2)
+	if rr2.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr2.Code, rr2.Body.String())
+	}
+
+	// list messages
+	req3 := httptest.NewRequest(http.MethodGet, "/api/v1/reports/r1/messages", nil)
+	req3.Header.Set("Authorization", "Bearer "+reg.AccessToken)
+	rr3 := httptest.NewRecorder()
+	h.ServeHTTP(rr3, req3)
+	if rr3.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr3.Code, rr3.Body.String())
+	}
+	var resp struct {
+		Items []struct {
+			Text string `json:"text"`
+		} `json:"items"`
+		Total int `json:"total"`
+	}
+	_ = json.Unmarshal(rr3.Body.Bytes(), &resp)
+	if resp.Total != 1 || len(resp.Items) != 1 || resp.Items[0].Text != "hello" {
 		t.Fatalf("unexpected resp: %+v", resp)
 	}
 }

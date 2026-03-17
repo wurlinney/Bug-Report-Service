@@ -142,45 +142,29 @@ LIMIT $%d OFFSET $%d
 func buildReportWhere(f ports.ReportListFilter) (string, []any) {
 	var parts []string
 	var args []any
-	add := func(cond string, val any) {
+	addArg := func(val any) string {
 		args = append(args, val)
-		parts = append(parts, fmt.Sprintf(cond, len(args)))
+		return fmt.Sprintf("$%d", len(args))
 	}
 
 	if f.Status != nil && strings.TrimSpace(*f.Status) != "" {
-		add("status = $%d", strings.TrimSpace(*f.Status))
+		parts = append(parts, "status = "+addArg(strings.TrimSpace(*f.Status)))
 	}
 	if f.UserID != nil && strings.TrimSpace(*f.UserID) != "" {
-		add("user_id = $%d", strings.TrimSpace(*f.UserID))
+		parts = append(parts, "user_id = "+addArg(strings.TrimSpace(*f.UserID)))
 	}
 	if f.Query != nil && strings.TrimSpace(*f.Query) != "" {
 		q := "%" + strings.TrimSpace(*f.Query) + "%"
-		add("(title ILIKE $%d OR description ILIKE $%d)", q)
-		// we used same placeholder index twice; fix by adding twice with same value
-		// We'll rewrite by adding two args.
+		p1 := addArg(q)
+		p2 := addArg(q)
+		parts = append(parts, "(title ILIKE "+p1+" OR description ILIKE "+p2+")")
 	}
-
-	// Fix for query: add as two args safely.
-	// If Query was set, last part is wrong; handle by rebuilding in a safe way.
-	if f.Query != nil && strings.TrimSpace(*f.Query) != "" {
-		// remove the last part added above, and fix it
-		parts = parts[:len(parts)-1]
-		args = args[:len(args)-1]
-
-		q := "%" + strings.TrimSpace(*f.Query) + "%"
-		args = append(args, q)
-		p1 := len(args)
-		args = append(args, q)
-		p2 := len(args)
-		parts = append(parts, fmt.Sprintf("(title ILIKE $%d OR description ILIKE $%d)", p1, p2))
-	}
-
 	if f.CreatedAt != nil {
 		if f.CreatedAt.From != nil {
-			add("created_at >= $%d", *f.CreatedAt.From)
+			parts = append(parts, "created_at >= "+addArg(*f.CreatedAt.From))
 		}
 		if f.CreatedAt.To != nil {
-			add("created_at <= $%d", *f.CreatedAt.To)
+			parts = append(parts, "created_at <= "+addArg(*f.CreatedAt.To))
 		}
 	}
 

@@ -54,7 +54,7 @@ func createReportHandler(deps Deps) http.HandlerFunc {
 			return
 		}
 
-		writeJSON(w, http.StatusOK, map[string]any{
+		writeJSON(w, http.StatusCreated, map[string]any{
 			"id":          created.ID,
 			"user_id":     created.UserID,
 			"title":       created.Title,

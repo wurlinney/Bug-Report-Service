@@ -21,17 +21,17 @@ type refreshReq struct {
 func registerHandler(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if deps.AuthService == nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "misconfigured"})
+			writeError(w, http.StatusInternalServerError, "misconfigured", "service misconfigured")
 			return
 		}
 		var req authReq
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "bad_request"})
+			writeError(w, http.StatusBadRequest, "bad_request", "invalid json body")
 			return
 		}
 		req.Email = strings.TrimSpace(req.Email)
 		if req.Email == "" || len(req.Password) < 8 {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "validation_error"})
+			writeError(w, http.StatusBadRequest, "validation_error", "email required, password min 8 chars")
 			return
 		}
 
@@ -42,13 +42,13 @@ func registerHandler(deps Deps) http.HandlerFunc {
 		if err != nil {
 			switch {
 			case err == auth.ErrEmailAlreadyExists:
-				writeJSON(w, http.StatusConflict, map[string]any{"error": "email_exists"})
+				writeError(w, http.StatusConflict, "email_exists", "email already exists")
 			default:
-				writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "auth_error"})
+				writeError(w, http.StatusInternalServerError, "internal_error", "internal error")
 			}
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
+		writeJSON(w, http.StatusCreated, map[string]any{
 			"access_token":     resp.AccessToken,
 			"refresh_token_id": resp.RefreshTokenID,
 			"refresh_token":    resp.RefreshToken,
@@ -59,17 +59,17 @@ func registerHandler(deps Deps) http.HandlerFunc {
 func loginHandler(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if deps.AuthService == nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "misconfigured"})
+			writeError(w, http.StatusInternalServerError, "misconfigured", "service misconfigured")
 			return
 		}
 		var req authReq
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "bad_request"})
+			writeError(w, http.StatusBadRequest, "bad_request", "invalid json body")
 			return
 		}
 		req.Email = strings.TrimSpace(req.Email)
 		if req.Email == "" || req.Password == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "validation_error"})
+			writeError(w, http.StatusBadRequest, "validation_error", "email and password are required")
 			return
 		}
 
@@ -78,7 +78,7 @@ func loginHandler(deps Deps) http.HandlerFunc {
 			Password: req.Password,
 		})
 		if err != nil {
-			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid_credentials"})
+			writeError(w, http.StatusUnauthorized, "invalid_credentials", "invalid credentials")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -92,16 +92,16 @@ func loginHandler(deps Deps) http.HandlerFunc {
 func refreshHandler(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if deps.AuthService == nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "misconfigured"})
+			writeError(w, http.StatusInternalServerError, "misconfigured", "service misconfigured")
 			return
 		}
 		var req refreshReq
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "bad_request"})
+			writeError(w, http.StatusBadRequest, "bad_request", "invalid json body")
 			return
 		}
 		if req.RefreshTokenID == "" || req.RefreshToken == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "validation_error"})
+			writeError(w, http.StatusBadRequest, "validation_error", "refresh_token_id and refresh_token are required")
 			return
 		}
 
@@ -110,7 +110,7 @@ func refreshHandler(deps Deps) http.HandlerFunc {
 			RefreshToken:   req.RefreshToken,
 		})
 		if err != nil {
-			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid_refresh"})
+			writeError(w, http.StatusUnauthorized, "invalid_refresh", "invalid refresh token")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{

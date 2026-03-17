@@ -15,6 +15,7 @@ import (
 	s3adapter "bug-report-service/internal/adapters/storage/s3"
 	"bug-report-service/internal/application/attachment"
 	"bug-report-service/internal/application/auth"
+	"bug-report-service/internal/application/message"
 	"bug-report-service/internal/application/report"
 	"bug-report-service/internal/application/user"
 
@@ -63,6 +64,7 @@ func NewApp() (*App, error) {
 		rtRepo := postgres.NewRefreshTokenRepository(db)
 		reportsRepo := postgres.NewReportRepository(db)
 		attsRepo := postgres.NewAttachmentRepository(db)
+		msgRepo := postgres.NewMessageRepository(db)
 
 		hasher := security.NewBCryptPasswordHasher(12)
 		jwtMgr := security.NewJWTManager(security.JWTConfig{
@@ -88,6 +90,12 @@ func NewApp() (*App, error) {
 			Clock:   security.RealClock{},
 			Random:  security.NewTokenGenerator(),
 		})
+		msgSvc := message.NewService(message.Deps{
+			Reports:  reportsRepo,
+			Messages: msgRepo,
+			Clock:    security.RealClock{},
+			Random:   security.NewTokenGenerator(),
+		})
 		const uploadMaxSize = 20 * 1024 * 1024
 		allowedMIMEs := map[string]struct{}{"image/png": {}, "image/jpeg": {}, "image/webp": {}}
 
@@ -104,6 +112,7 @@ func NewApp() (*App, error) {
 		apiDeps.AuthService = authSvc
 		apiDeps.UserService = userSvc
 		apiDeps.ReportService = reportSvc
+		apiDeps.MessageService = msgSvc
 		apiDeps.AttachmentService = attSvc
 		apiDeps.TokenVerifier = security.TokenVerifier{JWT: jwtMgr}
 
@@ -135,14 +144,16 @@ func NewApp() (*App, error) {
 					meta := ev.Upload.MetaData
 					reportID := strings.TrimSpace(meta["report_id"])
 					if reportID == "" {
+						logger.Error("tus finalize: missing report_id in metadata", "upload_id", ev.Upload.ID)
 						continue
 					}
 					uploaderID := strings.TrimSpace(meta["uploader_id"])
 					uploaderRole := strings.TrimSpace(meta["uploader_role"])
 					if uploaderID == "" || uploaderRole == "" {
+						logger.Error("tus finalize: missing uploader info in metadata", "upload_id", ev.Upload.ID)
 						continue
 					}
-					_, _ = attSvc.Finalize(context.Background(), attachment.FinalizeRequest{
+					_, fErr := attSvc.Finalize(context.Background(), attachment.FinalizeRequest{
 						ActorRole:      uploaderRole,
 						ActorID:        uploaderID,
 						ReportID:       reportID,
@@ -153,6 +164,13 @@ func NewApp() (*App, error) {
 						StorageKey:     "tus/" + ev.Upload.ID,
 						IdempotencyKey: meta["idempotency_key"],
 					})
+					if fErr != nil {
+						logger.Error("tus finalize: failed to persist attachment",
+							"upload_id", ev.Upload.ID,
+							"report_id", reportID,
+							"error", fErr.Error(),
+						)
+					}
 				}
 			}()
 		}

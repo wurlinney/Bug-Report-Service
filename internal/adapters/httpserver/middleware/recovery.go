@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"encoding/json"
 	"net/http"
 	"runtime/debug"
 
@@ -17,7 +18,14 @@ func Recovery(log observability.Logger) func(http.Handler) http.Handler {
 						"panic", rec,
 						"stack", string(debug.Stack()),
 					)
-					http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusInternalServerError)
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"error": map[string]any{
+							"code":    "internal_error",
+							"message": "internal server error",
+						},
+					})
 				}
 			}()
 			next.ServeHTTP(w, r)
