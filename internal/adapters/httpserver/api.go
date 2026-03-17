@@ -3,6 +3,8 @@ package httpserver
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"bug-report-service/internal/application/attachment"
 	"bug-report-service/internal/application/auth"
@@ -69,7 +71,12 @@ func NewAPI(deps Deps) http.Handler {
 			r.Post("/reports/{id}/messages", createReportMessageHandler(deps))
 			r.Get("/reports/{id}/attachments", listReportAttachmentsHandler(deps))
 			if deps.TusUploads != nil {
-				r.With(TusCreateGuard(deps)).Mount("/uploads/", deps.TusUploads)
+				const tusBase = "/api/v1/uploads"
+				// tusd routes based on r.URL.Path. Strip API prefix so tusd sees "/" (create) or "/<id>".
+				tusInner := http.StripPrefix(tusBase, deps.TusUploads)
+				tus := withTusLocationRewrite(tusBase, tusInner)
+				r.With(TusCreateGuard(deps)).Handle("/uploads", tus)
+				r.With(TusCreateGuard(deps)).Handle("/uploads/*", tus)
 			}
 		})
 
@@ -92,4 +99,33 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+type locationRewriteRW struct {
+	http.ResponseWriter
+	tusBase string
+}
+
+func (w *locationRewriteRW) WriteHeader(statusCode int) {
+	// If tusd returns Location like "/<id>", rewrite to "/api/v1/uploads/<id>".
+	loc := w.Header().Get("Location")
+	if statusCode == http.StatusCreated && loc != "" {
+		// Relative location
+		if strings.HasPrefix(loc, "/") && !strings.HasPrefix(loc, w.tusBase+"/") {
+			w.Header().Set("Location", w.tusBase+loc)
+		} else if strings.HasPrefix(loc, "http://") || strings.HasPrefix(loc, "https://") {
+			// Absolute location
+			if u, err := url.Parse(loc); err == nil && strings.HasPrefix(u.Path, "/") && !strings.HasPrefix(u.Path, w.tusBase+"/") {
+				u.Path = w.tusBase + u.Path
+				w.Header().Set("Location", u.String())
+			}
+		}
+	}
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+func withTusLocationRewrite(tusBase string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(&locationRewriteRW{ResponseWriter: w, tusBase: tusBase}, r)
+	})
 }

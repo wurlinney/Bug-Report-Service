@@ -132,7 +132,8 @@ func NewApp() (*App, error) {
 		composer := tushandler.NewStoreComposer()
 		store.UseIn(composer)
 		tus, err := tushandler.NewHandler(tushandler.Config{
-			BasePath:                "/api/v1/uploads/",
+			// We route /api/v1/uploads via chi and rewrite Location header there.
+			BasePath:                "/",
 			MaxSize:                 uploadMaxSize,
 			StoreComposer:           composer,
 			NotifyCompleteUploads:   true,

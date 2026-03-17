@@ -32,14 +32,16 @@ VALUES ($1,$2,$3,$4,$5,$6,$7)
 
 func (r *ReportRepository) GetByID(ctx context.Context, id string) (ports.ReportRecord, bool, error) {
 	const q = `
-SELECT id, user_id, title, description, status, created_at, updated_at
-FROM bug_reports
-WHERE id = $1
+SELECT r.id, r.user_id, u.name, r.title, r.description, r.status, r.created_at, r.updated_at
+FROM bug_reports r
+JOIN users u ON u.id = r.user_id
+WHERE r.id = $1
 `
 	var rep ports.ReportRecord
 	err := r.db.QueryRow(ctx, q, id).Scan(
 		&rep.ID,
 		&rep.UserID,
+		&rep.UserName,
 		&rep.Title,
 		&rep.Description,
 		&rep.Status,
@@ -84,9 +86,9 @@ func (r *ReportRepository) ListAll(ctx context.Context, f ports.ReportListFilter
 func (r *ReportRepository) list(ctx context.Context, f ports.ReportListFilter) ([]ports.ReportRecord, int, error) {
 	where, args := buildReportWhere(f)
 
-	sortCol := "created_at"
+	sortCol := "r.created_at"
 	if f.SortBy == "updated_at" {
-		sortCol = "updated_at"
+		sortCol = "r.updated_at"
 	}
 	dir := "ASC"
 	if f.SortDesc {
@@ -103,7 +105,7 @@ func (r *ReportRepository) list(ctx context.Context, f ports.ReportListFilter) (
 	}
 
 	// total
-	totalQ := "SELECT COUNT(*) FROM bug_reports" + where
+	totalQ := "SELECT COUNT(*) FROM bug_reports r" + where
 	var total int
 	if err := r.db.QueryRow(ctx, totalQ, args...).Scan(&total); err != nil {
 		return nil, 0, err
@@ -112,8 +114,9 @@ func (r *ReportRepository) list(ctx context.Context, f ports.ReportListFilter) (
 	// list
 	args2 := append(append([]any{}, args...), limit, offset)
 	listQ := fmt.Sprintf(`
-SELECT id, user_id, title, description, status, created_at, updated_at
-FROM bug_reports
+SELECT r.id, r.user_id, u.name, r.title, r.description, r.status, r.created_at, r.updated_at
+FROM bug_reports r
+JOIN users u ON u.id = r.user_id
 %s
 ORDER BY %s %s
 LIMIT $%d OFFSET $%d
@@ -128,7 +131,7 @@ LIMIT $%d OFFSET $%d
 	var out []ports.ReportRecord
 	for rows.Next() {
 		var rep ports.ReportRecord
-		if err := rows.Scan(&rep.ID, &rep.UserID, &rep.Title, &rep.Description, &rep.Status, &rep.CreatedAt, &rep.UpdatedAt); err != nil {
+		if err := rows.Scan(&rep.ID, &rep.UserID, &rep.UserName, &rep.Title, &rep.Description, &rep.Status, &rep.CreatedAt, &rep.UpdatedAt); err != nil {
 			return nil, 0, err
 		}
 		out = append(out, rep)
@@ -148,23 +151,23 @@ func buildReportWhere(f ports.ReportListFilter) (string, []any) {
 	}
 
 	if f.Status != nil && strings.TrimSpace(*f.Status) != "" {
-		parts = append(parts, "status = "+addArg(strings.TrimSpace(*f.Status)))
+		parts = append(parts, "r.status = "+addArg(strings.TrimSpace(*f.Status)))
 	}
 	if f.UserID != nil && strings.TrimSpace(*f.UserID) != "" {
-		parts = append(parts, "user_id = "+addArg(strings.TrimSpace(*f.UserID)))
+		parts = append(parts, "r.user_id = "+addArg(strings.TrimSpace(*f.UserID)))
 	}
 	if f.Query != nil && strings.TrimSpace(*f.Query) != "" {
 		q := "%" + strings.TrimSpace(*f.Query) + "%"
 		p1 := addArg(q)
 		p2 := addArg(q)
-		parts = append(parts, "(title ILIKE "+p1+" OR description ILIKE "+p2+")")
+		parts = append(parts, "(r.title ILIKE "+p1+" OR r.description ILIKE "+p2+")")
 	}
 	if f.CreatedAt != nil {
 		if f.CreatedAt.From != nil {
-			parts = append(parts, "created_at >= "+addArg(*f.CreatedAt.From))
+			parts = append(parts, "r.created_at >= "+addArg(*f.CreatedAt.From))
 		}
 		if f.CreatedAt.To != nil {
-			parts = append(parts, "created_at <= "+addArg(*f.CreatedAt.To))
+			parts = append(parts, "r.created_at <= "+addArg(*f.CreatedAt.To))
 		}
 	}
 

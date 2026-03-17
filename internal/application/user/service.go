@@ -12,6 +12,7 @@ var ErrUserNotFound = errors.New("user not found")
 type Profile struct {
 	ID        string
 	Email     string
+	Name      string
 	Role      string
 	CreatedAt int64
 	UpdatedAt int64
@@ -37,6 +38,7 @@ func (s *Service) GetProfile(ctx context.Context, userID string) (Profile, error
 	return Profile{
 		ID:        u.ID,
 		Email:     u.Email,
+		Name:      u.Name,
 		Role:      u.Role,
 		CreatedAt: u.CreatedAt.Unix(),
 		UpdatedAt: u.UpdatedAt.Unix(),

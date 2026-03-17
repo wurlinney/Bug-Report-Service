@@ -206,6 +206,7 @@ func TestAPI_RegisterThenMe(t *testing.T) {
 	// register
 	body, _ := json.Marshal(map[string]any{
 		"email":    "a@example.com",
+		"name":     "Alice",
 		"password": "P@ssw0rd!",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
@@ -237,10 +238,11 @@ func TestAPI_RegisterThenMe(t *testing.T) {
 	var me struct {
 		ID    string `json:"id"`
 		Email string `json:"email"`
+		Name  string `json:"name"`
 		Role  string `json:"role"`
 	}
 	_ = json.Unmarshal(rr2.Body.Bytes(), &me)
-	if me.ID != "id-1" || me.Email != "a@example.com" || me.Role != "user" {
+	if me.ID != "id-1" || me.Email != "a@example.com" || me.Name != "Alice" || me.Role != "user" {
 		t.Fatalf("unexpected me: %+v", me)
 	}
 }
@@ -276,7 +278,7 @@ func TestAPI_CreateReport(t *testing.T) {
 	})
 
 	// register (to ensure user exists for /me, and to get access token)
-	body, _ := json.Marshal(map[string]any{"email": "a@example.com", "password": "P@ssw0rd!"})
+	body, _ := json.Marshal(map[string]any{"email": "a@example.com", "name": "Alice", "password": "P@ssw0rd!"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -351,7 +353,7 @@ func TestAPI_ListMyReports(t *testing.T) {
 	})
 
 	// register -> access token
-	body, _ := json.Marshal(map[string]any{"email": "a@example.com", "password": "P@ssw0rd!"})
+	body, _ := json.Marshal(map[string]any{"email": "a@example.com", "name": "Alice", "password": "P@ssw0rd!"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -413,7 +415,7 @@ func TestAPI_GetMyReport(t *testing.T) {
 	})
 
 	// register -> access token
-	body, _ := json.Marshal(map[string]any{"email": "a@example.com", "password": "P@ssw0rd!"})
+	body, _ := json.Marshal(map[string]any{"email": "a@example.com", "name": "Alice", "password": "P@ssw0rd!"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -493,7 +495,7 @@ func TestAPI_ListReportAttachments(t *testing.T) {
 	})
 
 	// register to get access token
-	body, _ := json.Marshal(map[string]any{"email": "a@example.com", "password": "P@ssw0rd!"})
+	body, _ := json.Marshal(map[string]any{"email": "a@example.com", "name": "Alice", "password": "P@ssw0rd!"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -555,7 +557,7 @@ func TestAPI_CreateAndListMessages(t *testing.T) {
 	})
 
 	// register to get access token
-	body, _ := json.Marshal(map[string]any{"email": "a@example.com", "password": "P@ssw0rd!"})
+	body, _ := json.Marshal(map[string]any{"email": "a@example.com", "name": "Alice", "password": "P@ssw0rd!"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()

@@ -10,6 +10,7 @@ import (
 
 type authReq struct {
 	Email    string `json:"email"`
+	Name     string `json:"name"`
 	Password string `json:"password"`
 }
 
@@ -30,13 +31,15 @@ func registerHandler(deps Deps) http.HandlerFunc {
 			return
 		}
 		req.Email = strings.TrimSpace(req.Email)
-		if req.Email == "" || len(req.Password) < 8 {
-			writeError(w, http.StatusBadRequest, "validation_error", "email required, password min 8 chars")
+		req.Name = strings.TrimSpace(req.Name)
+		if req.Email == "" || req.Name == "" || len(req.Password) < 8 {
+			writeError(w, http.StatusBadRequest, "validation_error", "email and name required, password min 8 chars")
 			return
 		}
 
 		resp, err := deps.AuthService.Register(r.Context(), auth.RegisterRequest{
 			Email:    req.Email,
+			Name:     req.Name,
 			Password: req.Password,
 		})
 		if err != nil {

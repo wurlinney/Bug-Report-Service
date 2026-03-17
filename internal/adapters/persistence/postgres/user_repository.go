@@ -21,7 +21,7 @@ func NewUserRepository(db *pgxpool.Pool) *UserRepository {
 
 func (r *UserRepository) GetByEmail(ctx context.Context, email string) (ports.UserRecord, bool, error) {
 	const q = `
-SELECT id, email, password_hash, role, created_at, updated_at
+SELECT id, email, name, password_hash, role, created_at, updated_at
 FROM users
 WHERE email = $1
 `
@@ -29,6 +29,7 @@ WHERE email = $1
 	err := r.db.QueryRow(ctx, q, email).Scan(
 		&u.ID,
 		&u.Email,
+		&u.Name,
 		&u.PasswordHash,
 		&u.Role,
 		&u.CreatedAt,
@@ -45,7 +46,7 @@ WHERE email = $1
 
 func (r *UserRepository) GetByID(ctx context.Context, id string) (ports.UserRecord, bool, error) {
 	const q = `
-SELECT id, email, password_hash, role, created_at, updated_at
+SELECT id, email, name, password_hash, role, created_at, updated_at
 FROM users
 WHERE id = $1
 `
@@ -53,6 +54,7 @@ WHERE id = $1
 	err := r.db.QueryRow(ctx, q, id).Scan(
 		&u.ID,
 		&u.Email,
+		&u.Name,
 		&u.PasswordHash,
 		&u.Role,
 		&u.CreatedAt,
@@ -69,10 +71,10 @@ WHERE id = $1
 
 func (r *UserRepository) Create(ctx context.Context, u ports.UserRecord) error {
 	const q = `
-INSERT INTO users (id, email, password_hash, role, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO users (id, email, name, password_hash, role, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 `
-	_, err := r.db.Exec(ctx, q, u.ID, u.Email, u.PasswordHash, u.Role, u.CreatedAt, u.UpdatedAt)
+	_, err := r.db.Exec(ctx, q, u.ID, u.Email, u.Name, u.PasswordHash, u.Role, u.CreatedAt, u.UpdatedAt)
 	if err == nil {
 		return nil
 	}

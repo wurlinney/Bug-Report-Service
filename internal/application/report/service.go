@@ -136,6 +136,7 @@ func toDTO(r ports.ReportRecord) ReportDTO {
 	return ReportDTO{
 		ID:          r.ID,
 		UserID:      r.UserID,
+		UserName:    r.UserName,
 		Title:       r.Title,
 		Description: r.Description,
 		Status:      r.Status,

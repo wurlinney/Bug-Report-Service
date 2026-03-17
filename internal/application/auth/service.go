@@ -40,7 +40,8 @@ func NewService(deps Deps) *Service {
 
 func (s *Service) Register(ctx context.Context, req RegisterRequest) (AuthResponse, error) {
 	email := normalizeEmail(req.Email)
-	if email == "" || req.Password == "" {
+	name := strings.TrimSpace(req.Name)
+	if email == "" || name == "" || req.Password == "" {
 		return AuthResponse{}, ErrInvalidCredentials
 	}
 
@@ -60,6 +61,7 @@ func (s *Service) Register(ctx context.Context, req RegisterRequest) (AuthRespon
 	u := ports.UserRecord{
 		ID:           uid,
 		Email:        email,
+		Name:         name,
 		PasswordHash: hash,
 		Role:         "user",
 		CreatedAt:    now,

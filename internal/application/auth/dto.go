@@ -2,6 +2,7 @@ package auth
 
 type RegisterRequest struct {
 	Email    string
+	Name     string
 	Password string
 }
 

@@ -3,12 +3,11 @@
 package integration
 
 import (
+	"bug-report-service/internal/adapters/persistence/postgres"
+	"bug-report-service/internal/application/ports"
 	"context"
 	"testing"
 	"time"
-
-	"bug-report-service/internal/adapters/persistence/postgres"
-	"bug-report-service/internal/application/ports"
 )
 
 func TestPostgresAttachmentRepository_CreateGetIdempotencyAndList(t *testing.T) {

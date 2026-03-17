@@ -42,6 +42,7 @@ type ListAllRequest struct {
 type ReportDTO struct {
 	ID          string
 	UserID      string
+	UserName    string
 	Title       string
 	Description string
 	Status      string

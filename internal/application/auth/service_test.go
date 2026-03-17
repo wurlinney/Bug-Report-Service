@@ -105,6 +105,7 @@ func TestService_RegisterLoginRefresh_HappyPath(t *testing.T) {
 
 	reg, err := s.Register(ctx, RegisterRequest{
 		Email:    "a@example.com",
+		Name:     "Alice",
 		Password: "P@ssw0rd!",
 	})
 	if err != nil {
@@ -160,6 +161,7 @@ func TestService_Register_DuplicateEmail(t *testing.T) {
 
 	_, err := s.Register(context.Background(), RegisterRequest{
 		Email:    "a@example.com",
+		Name:     "Alice",
 		Password: "P@ssw0rd!",
 	})
 	if !errors.Is(err, ErrEmailAlreadyExists) {

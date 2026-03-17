@@ -57,6 +57,7 @@ func createReportHandler(deps Deps) http.HandlerFunc {
 		writeJSON(w, http.StatusCreated, map[string]any{
 			"id":          created.ID,
 			"user_id":     created.UserID,
+			"user_name":   created.UserName,
 			"title":       created.Title,
 			"description": created.Description,
 			"status":      created.Status,
@@ -116,6 +117,7 @@ func listMyReportsHandler(deps Deps) http.HandlerFunc {
 			out = append(out, map[string]any{
 				"id":          it.ID,
 				"user_id":     it.UserID,
+				"user_name":   it.UserName,
 				"title":       it.Title,
 				"description": it.Description,
 				"status":      it.Status,
@@ -165,6 +167,7 @@ func getMyReportHandler(deps Deps) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"id":          got.ID,
 			"user_id":     got.UserID,
+			"user_name":   got.UserName,
 			"title":       got.Title,
 			"description": got.Description,
 			"status":      got.Status,

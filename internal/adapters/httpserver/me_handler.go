@@ -31,6 +31,7 @@ func meHandler(deps Deps) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"id":         profile.ID,
 			"email":      profile.Email,
+			"name":       profile.Name,
 			"role":       profile.Role,
 			"created_at": profile.CreatedAt,
 			"updated_at": profile.UpdatedAt,

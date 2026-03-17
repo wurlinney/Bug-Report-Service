@@ -21,6 +21,7 @@ type ReportRepository interface {
 type ReportRecord struct {
 	ID          string
 	UserID      string
+	UserName    string
 	Title       string
 	Description string
 	Status      string
