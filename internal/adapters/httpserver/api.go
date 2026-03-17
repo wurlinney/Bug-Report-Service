@@ -72,6 +72,17 @@ func NewAPI(deps Deps) http.Handler {
 				r.With(TusCreateGuard(deps)).Mount("/uploads/", deps.TusUploads)
 			}
 		})
+
+		r.Route("/mod", func(r chi.Router) {
+			r.Use(AuthMiddleware(deps.TokenVerifier))
+			r.Use(ModeratorOnly)
+			r.Get("/reports", listAllReportsHandler(deps))
+			r.Get("/reports/{id}", getReportHandler(deps))
+			r.Patch("/reports/{id}/status", changeReportStatusHandler(deps))
+			r.Get("/reports/{id}/messages", listReportMessagesHandler(deps))
+			r.Post("/reports/{id}/messages", createReportMessageHandler(deps))
+			r.Get("/reports/{id}/attachments", listReportAttachmentsHandler(deps))
+		})
 	})
 
 	return r

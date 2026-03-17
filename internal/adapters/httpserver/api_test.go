@@ -96,6 +96,9 @@ func (v fakeVerifier) VerifyAccessToken(token string) (Principal, error) {
 	if token == "access:id-1:user" {
 		return Principal{UserID: "id-1", Role: "user"}, nil
 	}
+	if token == "access:mod-1:moderator" {
+		return Principal{UserID: "mod-1", Role: "moderator"}, nil
+	}
 	return Principal{}, ErrUnauthorized
 }
 
@@ -111,8 +114,15 @@ func (m *memReports) GetByID(_ context.Context, id string) (ports.ReportRecord, 
 	r, ok := m.byID[id]
 	return r, ok, nil
 }
-func (m *memReports) UpdateStatus(_ context.Context, _ string, _ string, _ time.Time) error {
-	return ports.ErrNotFound
+func (m *memReports) UpdateStatus(_ context.Context, id string, status string, when time.Time) error {
+	r, ok := m.byID[id]
+	if !ok {
+		return ports.ErrNotFound
+	}
+	r.Status = status
+	r.UpdatedAt = when
+	m.byID[id] = r
+	return nil
 }
 func (m *memReports) ListByUser(_ context.Context, userID string, f ports.ReportListFilter) ([]ports.ReportRecord, int, error) {
 	var out []ports.ReportRecord
@@ -608,5 +618,63 @@ func TestAPI_Me_UnauthorizedWithoutToken(t *testing.T) {
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", rr.Code)
+	}
+}
+
+func TestAPI_Mod_ListReports(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	reportsRepo := &memReports{byID: map[string]ports.ReportRecord{}}
+	_ = reportsRepo.Create(context.Background(), ports.ReportRecord{ID: "r-1", UserID: "u-1", Title: "t1", Description: "d1", Status: "new", CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now.Add(-2 * time.Hour)})
+	_ = reportsRepo.Create(context.Background(), ports.ReportRecord{ID: "r-2", UserID: "u-2", Title: "t2", Description: "d2", Status: "resolved", CreatedAt: now.Add(-1 * time.Hour), UpdatedAt: now.Add(-1 * time.Hour)})
+
+	h := NewAPI(Deps{
+		Ready:         NewReadiness(),
+		ReportService: report.NewService(report.Deps{Reports: reportsRepo, Clock: fakeClock{t: now}, Random: fakeReportRandom{}}),
+		TokenVerifier: fakeVerifier{},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/mod/reports?sort_desc=true", nil)
+	req.Header.Set("Authorization", "Bearer access:mod-1:moderator")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+		Total int `json:"total"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.Total != 2 || len(resp.Items) != 2 {
+		t.Fatalf("unexpected resp: %+v", resp)
+	}
+}
+
+func TestAPI_Mod_ChangeStatus(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	reportsRepo := &memReports{byID: map[string]ports.ReportRecord{}}
+	_ = reportsRepo.Create(context.Background(), ports.ReportRecord{ID: "r-1", UserID: "u-1", Title: "t1", Description: "d1", Status: "new", CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now.Add(-2 * time.Hour)})
+
+	h := NewAPI(Deps{
+		Ready:         NewReadiness(),
+		ReportService: report.NewService(report.Deps{Reports: reportsRepo, Clock: fakeClock{t: now}, Random: fakeReportRandom{}}),
+		TokenVerifier: fakeVerifier{},
+	})
+
+	body, _ := json.Marshal(map[string]any{"status": "in_review"})
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/mod/reports/r-1/status", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer access:mod-1:moderator")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	updated, ok := reportsRepo.byID["r-1"]
+	if !ok || updated.Status != "in_review" {
+		t.Fatalf("status not updated: %+v", updated)
 	}
 }

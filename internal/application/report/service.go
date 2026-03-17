@@ -48,6 +48,10 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (ReportDTO, err
 }
 
 func (s *Service) GetForUser(ctx context.Context, actorUserID string, reportID string) (ReportDTO, error) {
+	return s.GetForActor(ctx, "user", actorUserID, reportID)
+}
+
+func (s *Service) GetForActor(ctx context.Context, actorRole string, actorID string, reportID string) (ReportDTO, error) {
 	r, found, err := s.deps.Reports.GetByID(ctx, reportID)
 	if err != nil {
 		return ReportDTO{}, err
@@ -55,7 +59,7 @@ func (s *Service) GetForUser(ctx context.Context, actorUserID string, reportID s
 	if !found {
 		return ReportDTO{}, ErrNotFound
 	}
-	if !policy.CanUserViewReport("user", actorUserID, r.UserID) {
+	if !policy.CanUserViewReport(actorRole, actorID, r.UserID) {
 		return ReportDTO{}, ErrForbidden
 	}
 	return toDTO(r), nil
@@ -91,6 +95,33 @@ func (s *Service) ListForUser(ctx context.Context, req ListForUserRequest) ([]Re
 		Offset:   req.Offset,
 	}
 	items, total, err := s.deps.Reports.ListByUser(ctx, req.ActorUserID, f)
+	if err != nil {
+		return nil, 0, err
+	}
+	out := make([]ReportDTO, 0, len(items))
+	for _, r := range items {
+		out = append(out, toDTO(r))
+	}
+	return out, total, nil
+}
+
+func (s *Service) ListAll(ctx context.Context, req ListAllRequest) ([]ReportDTO, int, error) {
+	if !policy.CanModeratorChangeStatus(req.ActorRole) {
+		return nil, 0, ErrForbidden
+	}
+	f := ports.ReportListFilter{
+		Status:   req.Status,
+		UserID:   req.UserID,
+		Query:    req.Query,
+		SortBy:   req.SortBy,
+		SortDesc: req.SortDesc,
+		Limit:    req.Limit,
+		Offset:   req.Offset,
+	}
+	if req.CreatedFrom != nil || req.CreatedTo != nil {
+		f.CreatedAt = &ports.TimeRange{From: req.CreatedFrom, To: req.CreatedTo}
+	}
+	items, total, err := s.deps.Reports.ListAll(ctx, f)
 	if err != nil {
 		return nil, 0, err
 	}

@@ -24,6 +24,21 @@ type ListForUserRequest struct {
 	Offset      int
 }
 
+type ListAllRequest struct {
+	ActorRole string
+
+	Status      *string
+	UserID      *string
+	Query       *string
+	CreatedFrom *time.Time
+	CreatedTo   *time.Time
+
+	SortBy   string
+	SortDesc bool
+	Limit    int
+	Offset   int
+}
+
 type ReportDTO struct {
 	ID          string
 	UserID      string
