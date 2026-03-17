@@ -251,3 +251,38 @@ func TestService_Upload_SanitizesStorageKeyParts(t *testing.T) {
 		t.Fatalf("expected no backslashes, got %q", got.StorageKey)
 	}
 }
+
+func TestService_Finalize_CreatesRecordWithoutStoragePut(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	reports := &memReports{byID: map[string]ports.ReportRecord{
+		"r1": {ID: "r1", UserID: "u1", CreatedAt: now, UpdatedAt: now},
+	}}
+	atts := &memAttachments{byReportID: map[string][]ports.AttachmentRecord{}, byIdemKey: map[string]ports.AttachmentRecord{}}
+
+	svc := NewService(Deps{
+		Reports:      reports,
+		Attachments:  atts,
+		Storage:      nil,
+		Clock:        fakeClock{t: now},
+		Random:       &fakeRandom{},
+		MaxFileSize:  1024,
+		AllowedMIMEs: map[string]struct{}{"image/png": {}},
+	})
+
+	got, err := svc.Finalize(context.Background(), FinalizeRequest{
+		ActorRole:   "user",
+		ActorID:     "u1",
+		ReportID:    "r1",
+		UploadID:    "upload-1",
+		FileName:    "../x.png",
+		ContentType: "image/png",
+		FileSize:    10,
+		StorageKey:  "tus/upload-1",
+	})
+	if err != nil {
+		t.Fatalf("Finalize error: %v", err)
+	}
+	if got.ID != "upload-1" || got.ReportID != "r1" || got.StorageKey != "tus/upload-1" {
+		t.Fatalf("unexpected dto: %+v", got)
+	}
+}

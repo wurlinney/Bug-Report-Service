@@ -95,6 +95,64 @@ func (s *Service) Upload(ctx context.Context, req UploadRequest) (AttachmentDTO,
 	return toDTO(rec), nil
 }
 
+func (s *Service) Finalize(ctx context.Context, req FinalizeRequest) (AttachmentDTO, error) {
+	if req.ActorRole == "" || req.ActorID == "" || req.ReportID == "" {
+		return AttachmentDTO{}, ErrBadInput
+	}
+	if strings.TrimSpace(req.UploadID) == "" {
+		return AttachmentDTO{}, ErrBadInput
+	}
+	if req.ContentType == "" || req.FileSize <= 0 || strings.TrimSpace(req.StorageKey) == "" {
+		return AttachmentDTO{}, ErrBadInput
+	}
+	if s.deps.MaxFileSize > 0 && req.FileSize > s.deps.MaxFileSize {
+		return AttachmentDTO{}, ErrBadInput
+	}
+	if _, ok := s.deps.AllowedMIMEs[req.ContentType]; !ok {
+		return AttachmentDTO{}, ErrBadInput
+	}
+
+	rep, found, err := s.deps.Reports.GetByID(ctx, req.ReportID)
+	if err != nil {
+		return AttachmentDTO{}, err
+	}
+	if !found {
+		return AttachmentDTO{}, ErrNotFound
+	}
+	if !policy.CanUserViewReport(req.ActorRole, req.ActorID, rep.UserID) {
+		return AttachmentDTO{}, ErrForbidden
+	}
+
+	if req.IdempotencyKey != "" {
+		if existing, ok, err := s.deps.Attachments.GetByIdempotencyKey(ctx, req.ReportID, req.IdempotencyKey); err != nil {
+			return AttachmentDTO{}, err
+		} else if ok {
+			return toDTO(existing), nil
+		}
+	}
+
+	now := s.deps.Clock.Now()
+	// Use tus upload id as attachment id to make finalize idempotent across retries.
+	id := strings.TrimSpace(req.UploadID)
+
+	rec := ports.AttachmentRecord{
+		ID:             id,
+		ReportID:       req.ReportID,
+		FileName:       safeFileName(req.FileName),
+		ContentType:    req.ContentType,
+		FileSize:       req.FileSize,
+		StorageKey:     strings.TrimSpace(req.StorageKey),
+		CreatedAt:      now,
+		IdempotencyKey: req.IdempotencyKey,
+		UploadedByID:   req.ActorID,
+		UploadedByRole: req.ActorRole,
+	}
+	if err := s.deps.Attachments.Create(ctx, rec); err != nil {
+		return AttachmentDTO{}, err
+	}
+	return toDTO(rec), nil
+}
+
 func toDTO(a ports.AttachmentRecord) AttachmentDTO {
 	return AttachmentDTO{
 		ID:          a.ID,

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"bug-report-service/internal/application/attachment"
 	"bug-report-service/internal/application/auth"
 	"bug-report-service/internal/application/report"
 	"bug-report-service/internal/application/user"
@@ -23,10 +24,13 @@ type TokenVerifier interface {
 type Deps struct {
 	Ready Readiness
 
-	AuthService   *auth.Service
-	UserService   *user.Service
-	ReportService *report.Service
-	TokenVerifier TokenVerifier
+	AuthService       *auth.Service
+	UserService       *user.Service
+	ReportService     *report.Service
+	AttachmentService *attachment.Service
+	TokenVerifier     TokenVerifier
+
+	TusUploads http.Handler
 }
 
 func NewAPI(deps Deps) http.Handler {
@@ -56,6 +60,9 @@ func NewAPI(deps Deps) http.Handler {
 			r.Get("/me", meHandler(deps))
 			r.Post("/reports", createReportHandler(deps))
 			r.Get("/reports", listMyReportsHandler(deps))
+			if deps.TusUploads != nil {
+				r.With(TusCreateGuard(deps)).Mount("/uploads/", deps.TusUploads)
+			}
 		})
 	})
 

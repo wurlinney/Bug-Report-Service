@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"bug-report-service/internal/adapters/config"
@@ -11,11 +12,14 @@ import (
 	"bug-report-service/internal/adapters/observability"
 	"bug-report-service/internal/adapters/persistence/postgres"
 	"bug-report-service/internal/adapters/security"
+	"bug-report-service/internal/application/attachment"
 	"bug-report-service/internal/application/auth"
 	"bug-report-service/internal/application/report"
 	"bug-report-service/internal/application/user"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/tus/tusd/v2/pkg/filestore"
+	tushandler "github.com/tus/tusd/v2/pkg/handler"
 )
 
 type App struct {
@@ -57,6 +61,7 @@ func NewApp() (*App, error) {
 		usersRepo := postgres.NewUserRepository(db)
 		rtRepo := postgres.NewRefreshTokenRepository(db)
 		reportsRepo := postgres.NewReportRepository(db)
+		attsRepo := postgres.NewAttachmentRepository(db)
 
 		hasher := security.NewBCryptPasswordHasher(12)
 		jwtMgr := security.NewJWTManager(security.JWTConfig{
@@ -82,10 +87,57 @@ func NewApp() (*App, error) {
 			Clock:   security.RealClock{},
 			Random:  security.NewTokenGenerator(),
 		})
+		attSvc := attachment.NewService(attachment.Deps{
+			Reports:      reportsRepo,
+			Attachments:  attsRepo,
+			Storage:      nil,
+			Clock:        security.RealClock{},
+			Random:       security.NewTokenGenerator(),
+			MaxFileSize:  20 * 1024 * 1024,
+			AllowedMIMEs: map[string]struct{}{"image/png": {}, "image/jpeg": {}, "image/webp": {}},
+		})
+
+		store := filestore.FileStore{Path: "data/tus"}
+		composer := tushandler.NewStoreComposer()
+		store.UseIn(composer)
+		tus, err := tushandler.NewHandler(tushandler.Config{
+			BasePath:              "/api/v1/uploads/",
+			StoreComposer:         composer,
+			NotifyCompleteUploads: true,
+		})
+		if err == nil {
+			apiDeps.TusUploads = tus
+			go func() {
+				for ev := range tus.CompleteUploads {
+					meta := ev.Upload.MetaData
+					reportID := strings.TrimSpace(meta["report_id"])
+					if reportID == "" {
+						continue
+					}
+					uploaderID := strings.TrimSpace(meta["uploader_id"])
+					if uploaderID == "" {
+						// best-effort fallback; middleware should enforce auth anyway
+						uploaderID = "unknown"
+					}
+					_, _ = attSvc.Finalize(context.Background(), attachment.FinalizeRequest{
+						ActorRole:      "user",
+						ActorID:        uploaderID,
+						ReportID:       reportID,
+						UploadID:       ev.Upload.ID,
+						FileName:       meta["filename"],
+						ContentType:    meta["content_type"],
+						FileSize:       ev.Upload.Size,
+						StorageKey:     "tus/" + ev.Upload.ID,
+						IdempotencyKey: meta["idempotency_key"],
+					})
+				}
+			}()
+		}
 
 		apiDeps.AuthService = authSvc
 		apiDeps.UserService = userSvc
 		apiDeps.ReportService = reportSvc
+		apiDeps.AttachmentService = attSvc
 		apiDeps.TokenVerifier = security.TokenVerifier{JWT: jwtMgr}
 	}
 
