@@ -30,6 +30,17 @@ type Config struct {
 		RPS   float64
 		Burst int
 	}
+
+	DB struct {
+		URL string
+	}
+
+	JWT struct {
+		Issuer     string
+		Secret     string
+		AccessTTL  time.Duration
+		RefreshTTL time.Duration
+	}
 }
 
 func Load() (Config, error) {
@@ -49,11 +60,21 @@ func Load() (Config, error) {
 	c.RateLimit.RPS = getFloat("RATE_LIMIT_RPS", 10)
 	c.RateLimit.Burst = getInt("RATE_LIMIT_BURST", 20)
 
+	c.DB.URL = getString("DATABASE_URL", "")
+
+	c.JWT.Issuer = getString("JWT_ISSUER", "bug-report-service")
+	c.JWT.Secret = getString("JWT_SECRET", "")
+	c.JWT.AccessTTL = getDuration("JWT_ACCESS_TTL", 15*time.Minute)
+	c.JWT.RefreshTTL = getDuration("JWT_REFRESH_TTL", 30*24*time.Hour)
+
 	if c.HTTP.Addr == "" {
 		return Config{}, errors.New("HTTP_ADDR is empty")
 	}
 	if c.RateLimit.RPS <= 0 || c.RateLimit.Burst <= 0 {
 		return Config{}, errors.New("rate limit must be positive")
+	}
+	if c.JWT.AccessTTL <= 0 || c.JWT.RefreshTTL <= 0 {
+		return Config{}, errors.New("jwt ttls must be positive")
 	}
 
 	return c, nil
