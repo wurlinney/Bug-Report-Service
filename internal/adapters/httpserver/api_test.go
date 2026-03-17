@@ -678,3 +678,97 @@ func TestAPI_Mod_ChangeStatus(t *testing.T) {
 		t.Fatalf("status not updated: %+v", updated)
 	}
 }
+
+func TestAPI_Mod_ForbiddenForUser(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	reportsRepo := &memReports{byID: map[string]ports.ReportRecord{}}
+
+	h := NewAPI(Deps{
+		Ready:         NewReadiness(),
+		ReportService: report.NewService(report.Deps{Reports: reportsRepo, Clock: fakeClock{t: now}, Random: fakeReportRandom{}}),
+		TokenVerifier: fakeVerifier{},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/mod/reports", nil)
+	req.Header.Set("Authorization", "Bearer access:id-1:user")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAPI_Mod_GetReport(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	reportsRepo := &memReports{byID: map[string]ports.ReportRecord{}}
+	_ = reportsRepo.Create(context.Background(), ports.ReportRecord{ID: "r-1", UserID: "u-1", Title: "t1", Description: "d1", Status: "new", CreatedAt: now, UpdatedAt: now})
+
+	h := NewAPI(Deps{
+		Ready:         NewReadiness(),
+		ReportService: report.NewService(report.Deps{Reports: reportsRepo, Clock: fakeClock{t: now}, Random: fakeReportRandom{}}),
+		TokenVerifier: fakeVerifier{},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/mod/reports/r-1", nil)
+	req.Header.Set("Authorization", "Bearer access:mod-1:moderator")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var got struct {
+		ID     string `json:"id"`
+		UserID string `json:"user_id"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &got)
+	if got.ID != "r-1" || got.UserID != "u-1" {
+		t.Fatalf("unexpected report: %+v", got)
+	}
+}
+
+func TestAPI_Mod_CreateAndListMessages(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	reportsRepo := &memReports{byID: map[string]ports.ReportRecord{}}
+	_ = reportsRepo.Create(context.Background(), ports.ReportRecord{ID: "r1", UserID: "u-1", Title: "t", Description: "d", Status: "new", CreatedAt: now, UpdatedAt: now})
+
+	msgRepo := &memMessages{byReportID: map[string][]ports.MessageRecord{}}
+	msgSvc := message.NewService(message.Deps{Reports: reportsRepo, Messages: msgRepo, Clock: fakeClock{t: now}, Random: fakeReportRandom{}})
+
+	h := NewAPI(Deps{
+		Ready:          NewReadiness(),
+		ReportService:  report.NewService(report.Deps{Reports: reportsRepo, Clock: fakeClock{t: now}, Random: fakeReportRandom{}}),
+		MessageService: msgSvc,
+		TokenVerifier:  fakeVerifier{},
+	})
+
+	// create message as moderator
+	body, _ := json.Marshal(map[string]any{"text": "hello from mod"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/mod/reports/r1/messages", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer access:mod-1:moderator")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// list messages as moderator
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/mod/reports/r1/messages", nil)
+	req2.Header.Set("Authorization", "Bearer access:mod-1:moderator")
+	rr2 := httptest.NewRecorder()
+	h.ServeHTTP(rr2, req2)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr2.Code, rr2.Body.String())
+	}
+	var resp struct {
+		Items []struct {
+			Text       string `json:"text"`
+			SenderRole string `json:"sender_role"`
+		} `json:"items"`
+		Total int `json:"total"`
+	}
+	_ = json.Unmarshal(rr2.Body.Bytes(), &resp)
+	if resp.Total != 1 || len(resp.Items) != 1 || resp.Items[0].Text != "hello from mod" || resp.Items[0].SenderRole != "moderator" {
+		t.Fatalf("unexpected resp: %+v", resp)
+	}
+}
