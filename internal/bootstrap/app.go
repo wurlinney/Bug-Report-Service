@@ -12,14 +12,15 @@ import (
 	"bug-report-service/internal/adapters/observability"
 	"bug-report-service/internal/adapters/persistence/postgres"
 	"bug-report-service/internal/adapters/security"
+	s3adapter "bug-report-service/internal/adapters/storage/s3"
 	"bug-report-service/internal/application/attachment"
 	"bug-report-service/internal/application/auth"
 	"bug-report-service/internal/application/report"
 	"bug-report-service/internal/application/user"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/tus/tusd/v2/pkg/filestore"
 	tushandler "github.com/tus/tusd/v2/pkg/handler"
+	"github.com/tus/tusd/v2/pkg/s3store"
 )
 
 type App struct {
@@ -87,23 +88,43 @@ func NewApp() (*App, error) {
 			Clock:   security.RealClock{},
 			Random:  security.NewTokenGenerator(),
 		})
+		const uploadMaxSize = 20 * 1024 * 1024
+		allowedMIMEs := map[string]struct{}{"image/png": {}, "image/jpeg": {}, "image/webp": {}}
+
 		attSvc := attachment.NewService(attachment.Deps{
 			Reports:      reportsRepo,
 			Attachments:  attsRepo,
 			Storage:      nil,
 			Clock:        security.RealClock{},
 			Random:       security.NewTokenGenerator(),
-			MaxFileSize:  20 * 1024 * 1024,
-			AllowedMIMEs: map[string]struct{}{"image/png": {}, "image/jpeg": {}, "image/webp": {}},
+			MaxFileSize:  uploadMaxSize,
+			AllowedMIMEs: allowedMIMEs,
 		})
 
-		store := filestore.FileStore{Path: "data/tus"}
+		apiDeps.AuthService = authSvc
+		apiDeps.UserService = userSvc
+		apiDeps.ReportService = reportSvc
+		apiDeps.AttachmentService = attSvc
+		apiDeps.TokenVerifier = security.TokenVerifier{JWT: jwtMgr}
+
+		s3c, err := s3adapter.NewClient(context.Background(), cfg)
+		if err != nil {
+			ready.SetDependency("s3", false)
+			return nil, err
+		}
+		ready.SetDependency("s3", true)
+
+		store := s3store.New(cfg.S3.Bucket, s3c)
+		store.ObjectPrefix = "tus"
+		store.MetadataObjectPrefix = "tus-meta"
 		composer := tushandler.NewStoreComposer()
 		store.UseIn(composer)
 		tus, err := tushandler.NewHandler(tushandler.Config{
-			BasePath:              "/api/v1/uploads/",
-			StoreComposer:         composer,
-			NotifyCompleteUploads: true,
+			BasePath:                "/api/v1/uploads/",
+			MaxSize:                 uploadMaxSize,
+			StoreComposer:           composer,
+			NotifyCompleteUploads:   true,
+			PreUploadCreateCallback: httpserver.TusPreUploadCreateCallback(apiDeps, uploadMaxSize, allowedMIMEs),
 		})
 		if err == nil {
 			apiDeps.TusUploads = tus
@@ -115,12 +136,12 @@ func NewApp() (*App, error) {
 						continue
 					}
 					uploaderID := strings.TrimSpace(meta["uploader_id"])
-					if uploaderID == "" {
-						// best-effort fallback; middleware should enforce auth anyway
-						uploaderID = "unknown"
+					uploaderRole := strings.TrimSpace(meta["uploader_role"])
+					if uploaderID == "" || uploaderRole == "" {
+						continue
 					}
 					_, _ = attSvc.Finalize(context.Background(), attachment.FinalizeRequest{
-						ActorRole:      "user",
+						ActorRole:      uploaderRole,
 						ActorID:        uploaderID,
 						ReportID:       reportID,
 						UploadID:       ev.Upload.ID,
@@ -133,12 +154,6 @@ func NewApp() (*App, error) {
 				}
 			}()
 		}
-
-		apiDeps.AuthService = authSvc
-		apiDeps.UserService = userSvc
-		apiDeps.ReportService = reportSvc
-		apiDeps.AttachmentService = attSvc
-		apiDeps.TokenVerifier = security.TokenVerifier{JWT: jwtMgr}
 	}
 
 	api := httpserver.NewAPI(apiDeps)

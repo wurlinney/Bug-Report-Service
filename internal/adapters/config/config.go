@@ -41,6 +41,14 @@ type Config struct {
 		AccessTTL  time.Duration
 		RefreshTTL time.Duration
 	}
+
+	S3 struct {
+		Endpoint  string
+		Region    string
+		Bucket    string
+		AccessKey string
+		SecretKey string
+	}
 }
 
 func Load() (Config, error) {
@@ -66,6 +74,12 @@ func Load() (Config, error) {
 	c.JWT.Secret = getString("JWT_SECRET", "")
 	c.JWT.AccessTTL = getDuration("JWT_ACCESS_TTL", 15*time.Minute)
 	c.JWT.RefreshTTL = getDuration("JWT_REFRESH_TTL", 30*24*time.Hour)
+
+	c.S3.Endpoint = getString("S3_ENDPOINT", "http://minio:9000")
+	c.S3.Region = getString("S3_REGION", "us-east-1")
+	c.S3.Bucket = getString("S3_BUCKET", "bug-attachments")
+	c.S3.AccessKey = getString("S3_ACCESS_KEY", "")
+	c.S3.SecretKey = getString("S3_SECRET_KEY", "")
 
 	if c.HTTP.Addr == "" {
 		return Config{}, errors.New("HTTP_ADDR is empty")
