@@ -137,3 +137,31 @@ func TestService_ModeratorCanChangeStatus(t *testing.T) {
 		t.Fatalf("expected status resolved, got %q", r.Status)
 	}
 }
+
+func TestService_ListForUser_Paginates(t *testing.T) {
+	repo := &memReports{byID: map[string]ports.ReportRecord{}}
+	now := time.Unix(1_700_000_000, 0).UTC()
+	_ = repo.Create(context.Background(), ports.ReportRecord{ID: "r1", UserID: "u1", Title: "a", Description: "d", Status: StatusNew, CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now.Add(-2 * time.Hour)})
+	_ = repo.Create(context.Background(), ports.ReportRecord{ID: "r2", UserID: "u1", Title: "b", Description: "d", Status: StatusNew, CreatedAt: now.Add(-1 * time.Hour), UpdatedAt: now.Add(-1 * time.Hour)})
+	_ = repo.Create(context.Background(), ports.ReportRecord{ID: "r3", UserID: "u1", Title: "c", Description: "d", Status: StatusNew, CreatedAt: now, UpdatedAt: now})
+	_ = repo.Create(context.Background(), ports.ReportRecord{ID: "x", UserID: "u2", Title: "x", Description: "x", Status: StatusNew, CreatedAt: now, UpdatedAt: now})
+
+	s := NewService(Deps{Reports: repo, Clock: fakeClock2{t: now}, Random: &fakeRandom2{}})
+
+	items, total, err := s.ListForUser(context.Background(), ListForUserRequest{
+		ActorUserID: "u1",
+		SortBy:      "created_at",
+		SortDesc:    true,
+		Limit:       2,
+		Offset:      0,
+	})
+	if err != nil {
+		t.Fatalf("ListForUser error: %v", err)
+	}
+	if total != 3 {
+		t.Fatalf("expected total=3, got %d", total)
+	}
+	if len(items) != 2 || items[0].ID != "r3" || items[1].ID != "r2" {
+		t.Fatalf("unexpected items: %+v", items)
+	}
+}

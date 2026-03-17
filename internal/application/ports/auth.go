@@ -10,6 +10,7 @@ var ErrUniqueViolation = errors.New("unique violation")
 
 type UserRepository interface {
 	GetByEmail(ctx context.Context, email string) (u UserRecord, found bool, err error)
+	GetByID(ctx context.Context, id string) (u UserRecord, found bool, err error)
 	Create(ctx context.Context, u UserRecord) error
 }
 

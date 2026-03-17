@@ -14,6 +14,16 @@ type ChangeStatusRequest struct {
 	Status    string
 }
 
+type ListForUserRequest struct {
+	ActorUserID string
+	Status      *string
+	Query       *string
+	SortBy      string
+	SortDesc    bool
+	Limit       int
+	Offset      int
+}
+
 type ReportDTO struct {
 	ID          string
 	UserID      string

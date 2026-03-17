@@ -11,6 +11,8 @@ import (
 
 	"bug-report-service/internal/application/auth"
 	"bug-report-service/internal/application/ports"
+	"bug-report-service/internal/application/report"
+	appuser "bug-report-service/internal/application/user"
 )
 
 type memUsers struct {
@@ -20,6 +22,11 @@ type memUsers struct {
 
 func (m *memUsers) GetByEmail(_ context.Context, email string) (ports.UserRecord, bool, error) {
 	u, ok := m.byEmail[email]
+	return u, ok, nil
+}
+
+func (m *memUsers) GetByID(_ context.Context, id string) (ports.UserRecord, bool, error) {
+	u, ok := m.byID[id]
 	return u, ok, nil
 }
 
@@ -90,6 +97,43 @@ func (v fakeVerifier) VerifyAccessToken(token string) (Principal, error) {
 	return Principal{}, ErrUnauthorized
 }
 
+type memReports struct {
+	byID map[string]ports.ReportRecord
+}
+
+func (m *memReports) Create(_ context.Context, r ports.ReportRecord) error {
+	m.byID[r.ID] = r
+	return nil
+}
+func (m *memReports) GetByID(_ context.Context, id string) (ports.ReportRecord, bool, error) {
+	r, ok := m.byID[id]
+	return r, ok, nil
+}
+func (m *memReports) UpdateStatus(_ context.Context, _ string, _ string, _ time.Time) error {
+	return ports.ErrNotFound
+}
+func (m *memReports) ListByUser(_ context.Context, userID string, f ports.ReportListFilter) ([]ports.ReportRecord, int, error) {
+	var out []ports.ReportRecord
+	for _, r := range m.byID {
+		if r.UserID == userID {
+			out = append(out, r)
+		}
+	}
+	return ports.ApplyReportListFilter(out, f)
+}
+func (m *memReports) ListAll(_ context.Context, f ports.ReportListFilter) ([]ports.ReportRecord, int, error) {
+	var out []ports.ReportRecord
+	for _, r := range m.byID {
+		out = append(out, r)
+	}
+	return ports.ApplyReportListFilter(out, f)
+}
+
+type fakeReportRandom struct{}
+
+func (r fakeReportRandom) NewID() string             { return "r-1" }
+func (r fakeReportRandom) NewToken() (string, error) { return "unused", nil }
+
 func TestAPI_RegisterThenMe(t *testing.T) {
 	users := &memUsers{byEmail: map[string]ports.UserRecord{}, byID: map[string]ports.UserRecord{}}
 	refresh := &memRefresh{byTokenID: map[string]ports.RefreshTokenRecord{}}
@@ -108,6 +152,8 @@ func TestAPI_RegisterThenMe(t *testing.T) {
 	h := NewAPI(Deps{
 		Ready:         NewReadiness(),
 		AuthService:   authSvc,
+		UserService:   appuser.NewService(users),
+		ReportService: report.NewService(report.Deps{Reports: &memReports{byID: map[string]ports.ReportRecord{}}, Clock: fakeClock{t: now}, Random: fakeReportRandom{}}),
 		TokenVerifier: fakeVerifier{},
 	})
 
@@ -143,12 +189,155 @@ func TestAPI_RegisterThenMe(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rr2.Code, rr2.Body.String())
 	}
 	var me struct {
-		ID   string `json:"id"`
-		Role string `json:"role"`
+		ID    string `json:"id"`
+		Email string `json:"email"`
+		Role  string `json:"role"`
 	}
 	_ = json.Unmarshal(rr2.Body.Bytes(), &me)
-	if me.ID != "id-1" || me.Role != "user" {
+	if me.ID != "id-1" || me.Email != "a@example.com" || me.Role != "user" {
 		t.Fatalf("unexpected me: %+v", me)
+	}
+}
+
+func TestAPI_CreateReport(t *testing.T) {
+	users := &memUsers{byEmail: map[string]ports.UserRecord{}, byID: map[string]ports.UserRecord{}}
+	refresh := &memRefresh{byTokenID: map[string]ports.RefreshTokenRecord{}}
+	now := time.Unix(1_700_000_000, 0).UTC()
+
+	authSvc := auth.NewService(auth.Deps{
+		Users:         users,
+		RefreshTokens: refresh,
+		Hasher:        fakeHasher{},
+		JWT:           fakeJWT{},
+		Random:        fakeRandom{},
+		Clock:         fakeClock{t: now},
+		RefreshTTL:    30 * 24 * time.Hour,
+	})
+
+	reportsRepo := &memReports{byID: map[string]ports.ReportRecord{}}
+	reportSvc := report.NewService(report.Deps{
+		Reports: reportsRepo,
+		Clock:   fakeClock{t: now},
+		Random:  fakeReportRandom{},
+	})
+
+	h := NewAPI(Deps{
+		Ready:         NewReadiness(),
+		AuthService:   authSvc,
+		UserService:   appuser.NewService(users),
+		ReportService: reportSvc,
+		TokenVerifier: fakeVerifier{},
+	})
+
+	// register (to ensure user exists for /me, and to get access token)
+	body, _ := json.Marshal(map[string]any{"email": "a@example.com", "password": "P@ssw0rd!"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var reg struct {
+		AccessToken string `json:"access_token"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &reg)
+	if reg.AccessToken == "" {
+		t.Fatalf("expected access token")
+	}
+
+	// create report
+	body2, _ := json.Marshal(map[string]any{"title": "Crash", "description": "Steps..."})
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/reports", bytes.NewReader(body2))
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("Authorization", "Bearer "+reg.AccessToken)
+	rr2 := httptest.NewRecorder()
+	h.ServeHTTP(rr2, req2)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr2.Code, rr2.Body.String())
+	}
+	var created struct {
+		ID     string `json:"id"`
+		UserID string `json:"user_id"`
+		Title  string `json:"title"`
+		Status string `json:"status"`
+	}
+	_ = json.Unmarshal(rr2.Body.Bytes(), &created)
+	if created.ID != "r-1" || created.UserID != "id-1" || created.Title != "Crash" || created.Status != "new" {
+		t.Fatalf("unexpected created report: %+v", created)
+	}
+}
+
+func TestAPI_ListMyReports(t *testing.T) {
+	users := &memUsers{byEmail: map[string]ports.UserRecord{}, byID: map[string]ports.UserRecord{}}
+	refresh := &memRefresh{byTokenID: map[string]ports.RefreshTokenRecord{}}
+	now := time.Unix(1_700_000_000, 0).UTC()
+
+	authSvc := auth.NewService(auth.Deps{
+		Users:         users,
+		RefreshTokens: refresh,
+		Hasher:        fakeHasher{},
+		JWT:           fakeJWT{},
+		Random:        fakeRandom{},
+		Clock:         fakeClock{t: now},
+		RefreshTTL:    30 * 24 * time.Hour,
+	})
+
+	reportsRepo := &memReports{byID: map[string]ports.ReportRecord{}}
+	reportSvc := report.NewService(report.Deps{
+		Reports: reportsRepo,
+		Clock:   fakeClock{t: now},
+		Random:  fakeReportRandom{},
+	})
+
+	// seed reports for user id-1
+	_ = reportsRepo.Create(context.Background(), ports.ReportRecord{ID: "r-1", UserID: "id-1", Title: "t1", Description: "d1", Status: "new", CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now.Add(-2 * time.Hour)})
+	_ = reportsRepo.Create(context.Background(), ports.ReportRecord{ID: "r-2", UserID: "id-1", Title: "t2", Description: "d2", Status: "new", CreatedAt: now.Add(-1 * time.Hour), UpdatedAt: now.Add(-1 * time.Hour)})
+	_ = reportsRepo.Create(context.Background(), ports.ReportRecord{ID: "r-3", UserID: "id-1", Title: "t3", Description: "d3", Status: "new", CreatedAt: now, UpdatedAt: now})
+	_ = reportsRepo.Create(context.Background(), ports.ReportRecord{ID: "x", UserID: "other", Title: "x", Description: "x", Status: "new", CreatedAt: now, UpdatedAt: now})
+
+	h := NewAPI(Deps{
+		Ready:         NewReadiness(),
+		AuthService:   authSvc,
+		UserService:   appuser.NewService(users),
+		ReportService: reportSvc,
+		TokenVerifier: fakeVerifier{},
+	})
+
+	// register -> access token
+	body, _ := json.Marshal(map[string]any{"email": "a@example.com", "password": "P@ssw0rd!"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var reg struct {
+		AccessToken string `json:"access_token"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &reg)
+
+	// list
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/reports?limit=2&offset=0&sort_by=created_at&sort_desc=true", nil)
+	req2.Header.Set("Authorization", "Bearer "+reg.AccessToken)
+	rr2 := httptest.NewRecorder()
+	h.ServeHTTP(rr2, req2)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr2.Code, rr2.Body.String())
+	}
+	var resp struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+		Total int `json:"total"`
+	}
+	_ = json.Unmarshal(rr2.Body.Bytes(), &resp)
+	if resp.Total != 3 {
+		t.Fatalf("expected total=3, got %d", resp.Total)
+	}
+	if len(resp.Items) != 2 || resp.Items[0].ID != "r-3" || resp.Items[1].ID != "r-2" {
+		t.Fatalf("unexpected items: %+v", resp.Items)
 	}
 }
 
@@ -156,6 +345,8 @@ func TestAPI_Me_UnauthorizedWithoutToken(t *testing.T) {
 	h := NewAPI(Deps{
 		Ready:         NewReadiness(),
 		AuthService:   nil,
+		UserService:   nil,
+		ReportService: nil,
 		TokenVerifier: fakeVerifier{},
 	})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)

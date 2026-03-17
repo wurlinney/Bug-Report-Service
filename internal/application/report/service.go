@@ -78,6 +78,29 @@ func (s *Service) ChangeStatus(ctx context.Context, req ChangeStatusRequest) err
 	return nil
 }
 
+func (s *Service) ListForUser(ctx context.Context, req ListForUserRequest) ([]ReportDTO, int, error) {
+	if strings.TrimSpace(req.ActorUserID) == "" {
+		return nil, 0, ErrBadInput
+	}
+	f := ports.ReportListFilter{
+		Status:   req.Status,
+		Query:    req.Query,
+		SortBy:   req.SortBy,
+		SortDesc: req.SortDesc,
+		Limit:    req.Limit,
+		Offset:   req.Offset,
+	}
+	items, total, err := s.deps.Reports.ListByUser(ctx, req.ActorUserID, f)
+	if err != nil {
+		return nil, 0, err
+	}
+	out := make([]ReportDTO, 0, len(items))
+	for _, r := range items {
+		out = append(out, toDTO(r))
+	}
+	return out, total, nil
+}
+
 func toDTO(r ports.ReportRecord) ReportDTO {
 	return ReportDTO{
 		ID:          r.ID,

@@ -19,6 +19,11 @@ func (m *memUsers) GetByEmail(_ context.Context, email string) (ports.UserRecord
 	return u, ok, nil
 }
 
+func (m *memUsers) GetByID(_ context.Context, id string) (ports.UserRecord, bool, error) {
+	u, ok := m.byID[id]
+	return u, ok, nil
+}
+
 func (m *memUsers) Create(_ context.Context, u ports.UserRecord) error {
 	if _, exists := m.byEmail[u.Email]; exists {
 		return ports.ErrUniqueViolation

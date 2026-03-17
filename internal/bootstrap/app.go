@@ -12,6 +12,8 @@ import (
 	"bug-report-service/internal/adapters/persistence/postgres"
 	"bug-report-service/internal/adapters/security"
 	"bug-report-service/internal/application/auth"
+	"bug-report-service/internal/application/report"
+	"bug-report-service/internal/application/user"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -54,6 +56,7 @@ func NewApp() (*App, error) {
 
 		usersRepo := postgres.NewUserRepository(db)
 		rtRepo := postgres.NewRefreshTokenRepository(db)
+		reportsRepo := postgres.NewReportRepository(db)
 
 		hasher := security.NewBCryptPasswordHasher(12)
 		jwtMgr := security.NewJWTManager(security.JWTConfig{
@@ -73,7 +76,16 @@ func NewApp() (*App, error) {
 			RefreshTTL:    cfg.JWT.RefreshTTL,
 		})
 
+		userSvc := user.NewService(usersRepo)
+		reportSvc := report.NewService(report.Deps{
+			Reports: reportsRepo,
+			Clock:   security.RealClock{},
+			Random:  security.NewTokenGenerator(),
+		})
+
 		apiDeps.AuthService = authSvc
+		apiDeps.UserService = userSvc
+		apiDeps.ReportService = reportSvc
 		apiDeps.TokenVerifier = security.TokenVerifier{JWT: jwtMgr}
 	}
 

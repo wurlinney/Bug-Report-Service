@@ -43,6 +43,30 @@ WHERE email = $1
 	return u, true, nil
 }
 
+func (r *UserRepository) GetByID(ctx context.Context, id string) (ports.UserRecord, bool, error) {
+	const q = `
+SELECT id, email, password_hash, role, created_at, updated_at
+FROM users
+WHERE id = $1
+`
+	var u ports.UserRecord
+	err := r.db.QueryRow(ctx, q, id).Scan(
+		&u.ID,
+		&u.Email,
+		&u.PasswordHash,
+		&u.Role,
+		&u.CreatedAt,
+		&u.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ports.UserRecord{}, false, nil
+		}
+		return ports.UserRecord{}, false, err
+	}
+	return u, true, nil
+}
+
 func (r *UserRepository) Create(ctx context.Context, u ports.UserRecord) error {
 	const q = `
 INSERT INTO users (id, email, password_hash, role, created_at, updated_at)

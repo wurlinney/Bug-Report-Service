@@ -5,6 +5,8 @@ import (
 	"net/http"
 
 	"bug-report-service/internal/application/auth"
+	"bug-report-service/internal/application/report"
+	"bug-report-service/internal/application/user"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -22,6 +24,8 @@ type Deps struct {
 	Ready Readiness
 
 	AuthService   *auth.Service
+	UserService   *user.Service
+	ReportService *report.Service
 	TokenVerifier TokenVerifier
 }
 
@@ -49,7 +53,9 @@ func NewAPI(deps Deps) http.Handler {
 
 		r.Group(func(r chi.Router) {
 			r.Use(AuthMiddleware(deps.TokenVerifier))
-			r.Get("/me", meHandler())
+			r.Get("/me", meHandler(deps))
+			r.Post("/reports", createReportHandler(deps))
+			r.Get("/reports", listMyReportsHandler(deps))
 		})
 	})
 
