@@ -12,6 +12,10 @@ import (
 
 func NewServer(cfg config.Config, log observability.Logger, ready Readiness) *http.Server {
 	base := NewRouter(ready)
+	return NewServerWithHandler(cfg, log, base)
+}
+
+func NewServerWithHandler(cfg config.Config, log observability.Logger, h http.Handler) *http.Server {
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID())
@@ -20,7 +24,7 @@ func NewServer(cfg config.Config, log observability.Logger, ready Readiness) *ht
 	r.Use(middleware.CORS(cfg.CORS.AllowedOrigins))
 	r.Use(middleware.RateLimit(cfg.RateLimit.RPS, cfg.RateLimit.Burst))
 
-	r.Mount("/", base)
+	r.Mount("/", h)
 
 	return &http.Server{
 		Addr:         cfg.HTTP.Addr,
