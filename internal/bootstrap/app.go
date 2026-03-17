@@ -19,6 +19,7 @@ import (
 	"bug-report-service/internal/application/report"
 	"bug-report-service/internal/application/user"
 
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/jackc/pgx/v5/pgxpool"
 	tushandler "github.com/tus/tusd/v2/pkg/handler"
 	"github.com/tus/tusd/v2/pkg/s3store"
@@ -170,6 +171,19 @@ func NewApp() (*App, error) {
 							"report_id", reportID,
 							"error", fErr.Error(),
 						)
+						// Best-effort cleanup to avoid leaving untracked objects in S3.
+						key := "tus/" + ev.Upload.ID
+						_, delErr := s3c.DeleteObject(context.Background(), &s3.DeleteObjectInput{
+							Bucket: &cfg.S3.Bucket,
+							Key:    &key,
+						})
+						if delErr != nil {
+							logger.Error("tus finalize: failed to cleanup object in s3",
+								"upload_id", ev.Upload.ID,
+								"key", key,
+								"error", delErr.Error(),
+							)
+						}
 					}
 				}
 			}()
