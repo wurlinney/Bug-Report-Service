@@ -9,6 +9,11 @@ import (
 	"bug-report-service/internal/adapters/config"
 	"bug-report-service/internal/adapters/httpserver"
 	"bug-report-service/internal/adapters/observability"
+	"bug-report-service/internal/adapters/persistence/postgres"
+	"bug-report-service/internal/adapters/security"
+	"bug-report-service/internal/application/auth"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type App struct {
@@ -17,6 +22,8 @@ type App struct {
 
 	httpServer *http.Server
 	ready      httpserver.Readiness
+
+	db *pgxpool.Pool
 }
 
 func NewApp() (*App, error) {
@@ -32,13 +39,53 @@ func NewApp() (*App, error) {
 
 	ready := httpserver.NewReadiness()
 
-	srv := httpserver.NewServer(cfg, logger, ready)
+	apiDeps := httpserver.Deps{Ready: ready}
+
+	var db *pgxpool.Pool
+	// Full mode only when both DB and JWT secret are configured.
+	if cfg.DB.URL != "" && cfg.JWT.Secret != "" {
+		pool, err := pgxpool.New(context.Background(), cfg.DB.URL)
+		if err != nil {
+			ready.SetDependency("db", false)
+			return nil, err
+		}
+		db = pool
+		ready.SetDependency("db", true)
+
+		usersRepo := postgres.NewUserRepository(db)
+		rtRepo := postgres.NewRefreshTokenRepository(db)
+
+		hasher := security.NewBCryptPasswordHasher(12)
+		jwtMgr := security.NewJWTManager(security.JWTConfig{
+			Issuer:        cfg.JWT.Issuer,
+			AccessTTL:     cfg.JWT.AccessTTL,
+			RefreshTTL:    cfg.JWT.RefreshTTL,
+			HMACSecretKey: []byte(cfg.JWT.Secret),
+		})
+
+		authSvc := auth.NewService(auth.Deps{
+			Users:         usersRepo,
+			RefreshTokens: rtRepo,
+			Hasher:        hasher,
+			JWT:           jwtMgr,
+			Random:        security.NewTokenGenerator(),
+			Clock:         security.RealClock{},
+			RefreshTTL:    cfg.JWT.RefreshTTL,
+		})
+
+		apiDeps.AuthService = authSvc
+		apiDeps.TokenVerifier = security.TokenVerifier{JWT: jwtMgr}
+	}
+
+	api := httpserver.NewAPI(apiDeps)
+	srv := httpserver.NewServerWithHandler(cfg, logger, api)
 
 	return &App{
 		cfg:        cfg,
 		logger:     logger,
 		httpServer: srv,
 		ready:      ready,
+		db:         db,
 	}, nil
 }
 
@@ -74,6 +121,10 @@ func (a *App) Run(ctx context.Context) error {
 	if err := a.httpServer.Shutdown(shutdownCtx); err != nil {
 		a.logger.Error("http server shutdown error", "err", err.Error())
 		return err
+	}
+
+	if a.db != nil {
+		a.db.Close()
 	}
 
 	a.logger.Info("shutdown complete")
