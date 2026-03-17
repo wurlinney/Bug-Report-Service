@@ -28,3 +28,7 @@ type ObjectStorage interface {
 	PutObject(ctx context.Context, key string, contentType string, data []byte) error
 	DeleteObject(ctx context.Context, key string) error
 }
+
+type ObjectURLSigner interface {
+	PresignGetObject(ctx context.Context, key string, expiresIn time.Duration) (string, error)
+}

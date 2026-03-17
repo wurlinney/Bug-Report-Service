@@ -38,3 +38,9 @@ type AttachmentDTO struct {
 	StorageKey  string
 	CreatedAt   time.Time
 }
+
+type ListForReportRequest struct {
+	ActorRole string
+	ActorID   string
+	ReportID  string
+}

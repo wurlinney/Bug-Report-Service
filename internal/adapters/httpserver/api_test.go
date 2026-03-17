@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"bug-report-service/internal/application/attachment"
 	"bug-report-service/internal/application/auth"
 	"bug-report-service/internal/application/ports"
 	"bug-report-service/internal/application/report"
@@ -127,6 +128,26 @@ func (m *memReports) ListAll(_ context.Context, f ports.ReportListFilter) ([]por
 		out = append(out, r)
 	}
 	return ports.ApplyReportListFilter(out, f)
+}
+
+type memAttachments struct {
+	byReportID map[string][]ports.AttachmentRecord
+	byIdemKey  map[string]ports.AttachmentRecord
+}
+
+func (m *memAttachments) Create(_ context.Context, a ports.AttachmentRecord) error {
+	if a.IdempotencyKey != "" {
+		m.byIdemKey[a.ReportID+"|"+a.IdempotencyKey] = a
+	}
+	m.byReportID[a.ReportID] = append(m.byReportID[a.ReportID], a)
+	return nil
+}
+func (m *memAttachments) GetByIdempotencyKey(_ context.Context, reportID string, key string) (ports.AttachmentRecord, bool, error) {
+	a, ok := m.byIdemKey[reportID+"|"+key]
+	return a, ok, nil
+}
+func (m *memAttachments) ListByReport(_ context.Context, reportID string) ([]ports.AttachmentRecord, error) {
+	return append([]ports.AttachmentRecord(nil), m.byReportID[reportID]...), nil
 }
 
 type fakeReportRandom struct{}
@@ -339,6 +360,150 @@ func TestAPI_ListMyReports(t *testing.T) {
 	if len(resp.Items) != 2 || resp.Items[0].ID != "r-3" || resp.Items[1].ID != "r-2" {
 		t.Fatalf("unexpected items: %+v", resp.Items)
 	}
+}
+
+func TestAPI_GetMyReport(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	users := &memUsers{byEmail: map[string]ports.UserRecord{}, byID: map[string]ports.UserRecord{}}
+	refresh := &memRefresh{byTokenID: map[string]ports.RefreshTokenRecord{}}
+	authSvc := auth.NewService(auth.Deps{
+		Users:         users,
+		RefreshTokens: refresh,
+		Hasher:        fakeHasher{},
+		JWT:           fakeJWT{},
+		Random:        fakeRandom{},
+		Clock:         fakeClock{t: now},
+		RefreshTTL:    30 * 24 * time.Hour,
+	})
+
+	reportsRepo := &memReports{byID: map[string]ports.ReportRecord{}}
+	_ = reportsRepo.Create(context.Background(), ports.ReportRecord{ID: "r1", UserID: "id-1", Title: "t", Description: "d", Status: "new", CreatedAt: now, UpdatedAt: now})
+
+	h := NewAPI(Deps{
+		Ready:         NewReadiness(),
+		AuthService:   authSvc,
+		UserService:   appuser.NewService(users),
+		ReportService: report.NewService(report.Deps{Reports: reportsRepo, Clock: fakeClock{t: now}, Random: fakeReportRandom{}}),
+		TokenVerifier: fakeVerifier{},
+	})
+
+	// register -> access token
+	body, _ := json.Marshal(map[string]any{"email": "a@example.com", "password": "P@ssw0rd!"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var reg struct {
+		AccessToken string `json:"access_token"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &reg)
+
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/reports/r1", nil)
+	req2.Header.Set("Authorization", "Bearer "+reg.AccessToken)
+	rr2 := httptest.NewRecorder()
+	h.ServeHTTP(rr2, req2)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr2.Code, rr2.Body.String())
+	}
+	var got struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+	}
+	_ = json.Unmarshal(rr2.Body.Bytes(), &got)
+	if got.ID != "r1" || got.Title != "t" {
+		t.Fatalf("unexpected report: %+v", got)
+	}
+}
+
+func TestAPI_ListReportAttachments(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	users := &memUsers{byEmail: map[string]ports.UserRecord{}, byID: map[string]ports.UserRecord{}}
+	refresh := &memRefresh{byTokenID: map[string]ports.RefreshTokenRecord{}}
+	authSvc := auth.NewService(auth.Deps{
+		Users:         users,
+		RefreshTokens: refresh,
+		Hasher:        fakeHasher{},
+		JWT:           fakeJWT{},
+		Random:        fakeRandom{},
+		Clock:         fakeClock{t: now},
+		RefreshTTL:    30 * 24 * time.Hour,
+	})
+
+	reportsRepo := &memReports{byID: map[string]ports.ReportRecord{}}
+	_ = reportsRepo.Create(context.Background(), ports.ReportRecord{ID: "r1", UserID: "id-1", Title: "t", Description: "d", Status: "new", CreatedAt: now, UpdatedAt: now})
+
+	attsRepo := &memAttachments{byReportID: map[string][]ports.AttachmentRecord{
+		"r1": {{
+			ID:          "a1",
+			ReportID:    "r1",
+			FileName:    "x.png",
+			ContentType: "image/png",
+			FileSize:    10,
+			StorageKey:  "tus/a1",
+			CreatedAt:   now,
+		}},
+	}, byIdemKey: map[string]ports.AttachmentRecord{}}
+
+	attSvc := attachment.NewService(attachment.Deps{
+		Reports:      reportsRepo,
+		Attachments:  attsRepo,
+		Storage:      nil,
+		Clock:        fakeClock{t: now},
+		Random:       &fakeReportRandom{},
+		MaxFileSize:  20 * 1024 * 1024,
+		AllowedMIMEs: map[string]struct{}{"image/png": {}},
+	})
+
+	h := NewAPI(Deps{
+		Ready:             NewReadiness(),
+		AuthService:       authSvc,
+		UserService:       appuser.NewService(users),
+		ReportService:     report.NewService(report.Deps{Reports: reportsRepo, Clock: fakeClock{t: now}, Random: fakeReportRandom{}}),
+		AttachmentService: attSvc,
+		AttachmentSigner:  fakeSigner{},
+		TokenVerifier:     fakeVerifier{},
+	})
+
+	// register to get access token
+	body, _ := json.Marshal(map[string]any{"email": "a@example.com", "password": "P@ssw0rd!"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var reg struct {
+		AccessToken string `json:"access_token"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &reg)
+
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/reports/r1/attachments", nil)
+	req2.Header.Set("Authorization", "Bearer "+reg.AccessToken)
+	rr2 := httptest.NewRecorder()
+	h.ServeHTTP(rr2, req2)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr2.Code, rr2.Body.String())
+	}
+	var resp struct {
+		Items []struct {
+			ID          string `json:"id"`
+			DownloadURL string `json:"download_url"`
+		} `json:"items"`
+	}
+	_ = json.Unmarshal(rr2.Body.Bytes(), &resp)
+	if len(resp.Items) != 1 || resp.Items[0].ID != "a1" || resp.Items[0].DownloadURL == "" {
+		t.Fatalf("unexpected resp: %+v", resp)
+	}
+}
+
+type fakeSigner struct{}
+
+func (s fakeSigner) PresignGetObject(_ context.Context, key string, _ time.Duration) (string, error) {
+	return "https://example.test/" + key, nil
 }
 
 func TestAPI_Me_UnauthorizedWithoutToken(t *testing.T) {

@@ -286,3 +286,54 @@ func TestService_Finalize_CreatesRecordWithoutStoragePut(t *testing.T) {
 		t.Fatalf("unexpected dto: %+v", got)
 	}
 }
+
+func TestService_ListForReport_EnforcesAccess(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	reports := &memReports{byID: map[string]ports.ReportRecord{
+		"r1": {ID: "r1", UserID: "u1", CreatedAt: now, UpdatedAt: now},
+	}}
+	atts := &memAttachments{
+		byReportID: map[string][]ports.AttachmentRecord{
+			"r1": {{
+				ID:          "a1",
+				ReportID:    "r1",
+				FileName:    "x.png",
+				ContentType: "image/png",
+				FileSize:    10,
+				StorageKey:  "tus/u",
+				CreatedAt:   now,
+			}},
+		},
+		byIdemKey: map[string]ports.AttachmentRecord{},
+	}
+	svc := NewService(Deps{
+		Reports:      reports,
+		Attachments:  atts,
+		Storage:      nil,
+		Clock:        fakeClock{t: now},
+		Random:       &fakeRandom{},
+		MaxFileSize:  1024,
+		AllowedMIMEs: map[string]struct{}{"image/png": {}},
+	})
+
+	_, err := svc.ListForReport(context.Background(), ListForReportRequest{
+		ActorRole: "user",
+		ActorID:   "u2",
+		ReportID:  "r1",
+	})
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("expected forbidden, got %v", err)
+	}
+
+	list, err := svc.ListForReport(context.Background(), ListForReportRequest{
+		ActorRole: "user",
+		ActorID:   "u1",
+		ReportID:  "r1",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(list) != 1 || list[0].ID != "a1" {
+		t.Fatalf("unexpected list: %+v", list)
+	}
+}

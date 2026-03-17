@@ -6,6 +6,7 @@ import (
 
 	"bug-report-service/internal/application/attachment"
 	"bug-report-service/internal/application/auth"
+	"bug-report-service/internal/application/ports"
 	"bug-report-service/internal/application/report"
 	"bug-report-service/internal/application/user"
 
@@ -28,6 +29,7 @@ type Deps struct {
 	UserService       *user.Service
 	ReportService     *report.Service
 	AttachmentService *attachment.Service
+	AttachmentSigner  ports.ObjectURLSigner
 	TokenVerifier     TokenVerifier
 
 	TusUploads http.Handler
@@ -60,6 +62,8 @@ func NewAPI(deps Deps) http.Handler {
 			r.Get("/me", meHandler(deps))
 			r.Post("/reports", createReportHandler(deps))
 			r.Get("/reports", listMyReportsHandler(deps))
+			r.Get("/reports/{id}", getMyReportHandler(deps))
+			r.Get("/reports/{id}/attachments", listReportAttachmentsHandler(deps))
 			if deps.TusUploads != nil {
 				r.With(TusCreateGuard(deps)).Mount("/uploads/", deps.TusUploads)
 			}

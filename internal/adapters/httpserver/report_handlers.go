@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"bug-report-service/internal/application/report"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type createReportReq struct {
@@ -125,6 +127,49 @@ func listMyReportsHandler(deps Deps) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"items": out,
 			"total": total,
+		})
+	}
+}
+
+func getMyReportHandler(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := PrincipalFromContext(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid token")
+			return
+		}
+		if deps.ReportService == nil {
+			writeError(w, http.StatusInternalServerError, "misconfigured", "service misconfigured")
+			return
+		}
+
+		id := strings.TrimSpace(chi.URLParam(r, "id"))
+		if id == "" {
+			writeError(w, http.StatusBadRequest, "validation_error", "id is required")
+			return
+		}
+
+		got, err := deps.ReportService.GetForUser(r.Context(), p.UserID, id)
+		if err != nil {
+			switch err {
+			case report.ErrNotFound:
+				writeError(w, http.StatusNotFound, "not_found", "not found")
+			case report.ErrForbidden:
+				writeError(w, http.StatusForbidden, "forbidden", "forbidden")
+			default:
+				writeError(w, http.StatusInternalServerError, "internal_error", "internal error")
+			}
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"id":          got.ID,
+			"user_id":     got.UserID,
+			"title":       got.Title,
+			"description": got.Description,
+			"status":      got.Status,
+			"created_at":  got.CreatedAt.Unix(),
+			"updated_at":  got.UpdatedAt.Unix(),
 		})
 	}
 }

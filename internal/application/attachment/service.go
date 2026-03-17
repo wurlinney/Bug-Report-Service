@@ -153,6 +153,33 @@ func (s *Service) Finalize(ctx context.Context, req FinalizeRequest) (Attachment
 	return toDTO(rec), nil
 }
 
+func (s *Service) ListForReport(ctx context.Context, req ListForReportRequest) ([]AttachmentDTO, error) {
+	if req.ActorRole == "" || req.ActorID == "" || req.ReportID == "" {
+		return nil, ErrBadInput
+	}
+
+	rep, found, err := s.deps.Reports.GetByID(ctx, req.ReportID)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, ErrNotFound
+	}
+	if !policy.CanUserViewReport(req.ActorRole, req.ActorID, rep.UserID) {
+		return nil, ErrForbidden
+	}
+
+	items, err := s.deps.Attachments.ListByReport(ctx, req.ReportID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]AttachmentDTO, 0, len(items))
+	for _, a := range items {
+		out = append(out, toDTO(a))
+	}
+	return out, nil
+}
+
 func toDTO(a ports.AttachmentRecord) AttachmentDTO {
 	return AttachmentDTO{
 		ID:          a.ID,

@@ -114,6 +114,8 @@ func NewApp() (*App, error) {
 		}
 		ready.SetDependency("s3", true)
 
+		apiDeps.AttachmentSigner = s3adapter.NewPresigner(cfg.S3.Bucket, s3c)
+
 		store := s3store.New(cfg.S3.Bucket, s3c)
 		store.ObjectPrefix = "tus"
 		store.MetadataObjectPrefix = "tus-meta"
