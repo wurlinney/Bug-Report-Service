@@ -91,6 +91,22 @@ func Load() (Config, error) {
 		return Config{}, errors.New("jwt ttls must be positive")
 	}
 
+	// In non-local environments we require full configuration.
+	if strings.ToLower(strings.TrimSpace(c.AppEnv)) != "local" {
+		if strings.TrimSpace(c.DB.URL) == "" {
+			return Config{}, errors.New("DATABASE_URL is empty")
+		}
+		if strings.TrimSpace(c.JWT.Secret) == "" {
+			return Config{}, errors.New("JWT_SECRET is empty")
+		}
+		if strings.TrimSpace(c.S3.Bucket) == "" {
+			return Config{}, errors.New("S3_BUCKET is empty")
+		}
+		if strings.TrimSpace(c.S3.AccessKey) == "" || strings.TrimSpace(c.S3.SecretKey) == "" {
+			return Config{}, errors.New("S3_ACCESS_KEY or S3_SECRET_KEY is empty")
+		}
+	}
+
 	return c, nil
 }
 

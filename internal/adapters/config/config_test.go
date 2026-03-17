@@ -41,3 +41,16 @@ func TestLoad_ValidatesRateLimit(t *testing.T) {
 		t.Fatalf("expected error for non-positive rate limit")
 	}
 }
+
+func TestLoad_ProdRequiresSecrets(t *testing.T) {
+	t.Setenv("APP_ENV", "prod")
+	t.Setenv("DATABASE_URL", "")
+	t.Setenv("JWT_SECRET", "")
+	t.Setenv("S3_ACCESS_KEY", "")
+	t.Setenv("S3_SECRET_KEY", "")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatalf("expected error in prod when required vars are empty")
+	}
+}
