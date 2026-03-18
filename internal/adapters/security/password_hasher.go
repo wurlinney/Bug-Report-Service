@@ -1,6 +1,10 @@
 package security
 
-import "golang.org/x/crypto/bcrypt"
+import (
+	"errors"
+
+	"golang.org/x/crypto/bcrypt"
+)
 
 type PasswordHasher interface {
 	HashPassword(password string) (string, error)
@@ -34,7 +38,7 @@ func (h *bcryptPasswordHasher) VerifyPassword(hash string, password string) (boo
 	if err == nil {
 		return true, nil
 	}
-	if err == bcrypt.ErrMismatchedHashAndPassword {
+	if errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {
 		return false, nil
 	}
 	return false, err
