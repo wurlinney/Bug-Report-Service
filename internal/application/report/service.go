@@ -23,23 +23,33 @@ func NewService(deps Deps) *Service {
 	return &Service{deps: deps}
 }
 
+func (s *Service) Exists(ctx context.Context, reportID string) (bool, error) {
+	if strings.TrimSpace(reportID) == "" {
+		return false, ErrBadInput
+	}
+	_, found, err := s.deps.Reports.GetByID(ctx, reportID)
+	if err != nil {
+		return false, err
+	}
+	return found, nil
+}
+
 func (s *Service) Create(ctx context.Context, req CreateRequest) (ReportDTO, error) {
-	title := strings.TrimSpace(req.Title)
+	reporterName := strings.TrimSpace(req.ReporterName)
 	desc := strings.TrimSpace(req.Description)
-	if req.UserID == "" || title == "" || desc == "" {
+	if reporterName == "" {
 		return ReportDTO{}, ErrBadInput
 	}
 
 	now := s.deps.Clock.Now()
 	id := s.deps.Random.NewID()
 	r := ports.ReportRecord{
-		ID:          id,
-		UserID:      req.UserID,
-		Title:       title,
-		Description: desc,
-		Status:      StatusNew,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:           id,
+		ReporterName: reporterName,
+		Description:  desc,
+		Status:       StatusNew,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 	if err := s.deps.Reports.Create(ctx, r); err != nil {
 		return ReportDTO{}, err
@@ -47,11 +57,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (ReportDTO, err
 	return toDTO(r), nil
 }
 
-func (s *Service) GetForUser(ctx context.Context, actorUserID string, reportID string) (ReportDTO, error) {
-	return s.GetForActor(ctx, "user", actorUserID, reportID)
-}
-
-func (s *Service) GetForActor(ctx context.Context, actorRole string, actorID string, reportID string) (ReportDTO, error) {
+func (s *Service) GetForActor(ctx context.Context, actorRole string, _ string, reportID string) (ReportDTO, error) {
 	r, found, err := s.deps.Reports.GetByID(ctx, reportID)
 	if err != nil {
 		return ReportDTO{}, err
@@ -59,7 +65,7 @@ func (s *Service) GetForActor(ctx context.Context, actorRole string, actorID str
 	if !found {
 		return ReportDTO{}, ErrNotFound
 	}
-	if !policy.CanUserViewReport(actorRole, actorID, r.UserID) {
+	if !policy.CanModeratorChangeStatus(actorRole) {
 		return ReportDTO{}, ErrForbidden
 	}
 	return toDTO(r), nil
@@ -82,41 +88,18 @@ func (s *Service) ChangeStatus(ctx context.Context, req ChangeStatusRequest) err
 	return nil
 }
 
-func (s *Service) ListForUser(ctx context.Context, req ListForUserRequest) ([]ReportDTO, int, error) {
-	if strings.TrimSpace(req.ActorUserID) == "" {
-		return nil, 0, ErrBadInput
-	}
-	f := ports.ReportListFilter{
-		Status:   req.Status,
-		Query:    req.Query,
-		SortBy:   req.SortBy,
-		SortDesc: req.SortDesc,
-		Limit:    req.Limit,
-		Offset:   req.Offset,
-	}
-	items, total, err := s.deps.Reports.ListByUser(ctx, req.ActorUserID, f)
-	if err != nil {
-		return nil, 0, err
-	}
-	out := make([]ReportDTO, 0, len(items))
-	for _, r := range items {
-		out = append(out, toDTO(r))
-	}
-	return out, total, nil
-}
-
 func (s *Service) ListAll(ctx context.Context, req ListAllRequest) ([]ReportDTO, int, error) {
 	if !policy.CanModeratorChangeStatus(req.ActorRole) {
 		return nil, 0, ErrForbidden
 	}
 	f := ports.ReportListFilter{
-		Status:   req.Status,
-		UserID:   req.UserID,
-		Query:    req.Query,
-		SortBy:   req.SortBy,
-		SortDesc: req.SortDesc,
-		Limit:    req.Limit,
-		Offset:   req.Offset,
+		Status:       req.Status,
+		ReporterName: req.ReporterName,
+		Query:        req.Query,
+		SortBy:       req.SortBy,
+		SortDesc:     req.SortDesc,
+		Limit:        req.Limit,
+		Offset:       req.Offset,
 	}
 	if req.CreatedFrom != nil || req.CreatedTo != nil {
 		f.CreatedAt = &ports.TimeRange{From: req.CreatedFrom, To: req.CreatedTo}
@@ -134,13 +117,11 @@ func (s *Service) ListAll(ctx context.Context, req ListAllRequest) ([]ReportDTO,
 
 func toDTO(r ports.ReportRecord) ReportDTO {
 	return ReportDTO{
-		ID:          r.ID,
-		UserID:      r.UserID,
-		UserName:    r.UserName,
-		Title:       r.Title,
-		Description: r.Description,
-		Status:      r.Status,
-		CreatedAt:   r.CreatedAt,
-		UpdatedAt:   r.UpdatedAt,
+		ID:           r.ID,
+		ReporterName: r.ReporterName,
+		Description:  r.Description,
+		Status:       r.Status,
+		CreatedAt:    r.CreatedAt,
+		UpdatedAt:    r.UpdatedAt,
 	}
 }

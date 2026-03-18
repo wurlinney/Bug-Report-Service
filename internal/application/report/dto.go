@@ -3,9 +3,8 @@ package report
 import "time"
 
 type CreateRequest struct {
-	UserID      string
-	Title       string
-	Description string
+	ReporterName string
+	Description  string
 }
 
 type ChangeStatusRequest struct {
@@ -27,11 +26,11 @@ type ListForUserRequest struct {
 type ListAllRequest struct {
 	ActorRole string
 
-	Status      *string
-	UserID      *string
-	Query       *string
-	CreatedFrom *time.Time
-	CreatedTo   *time.Time
+	Status       *string
+	ReporterName *string
+	Query        *string
+	CreatedFrom  *time.Time
+	CreatedTo    *time.Time
 
 	SortBy   string
 	SortDesc bool
@@ -40,12 +39,10 @@ type ListAllRequest struct {
 }
 
 type ReportDTO struct {
-	ID          string
-	UserID      string
-	UserName    string
-	Title       string
-	Description string
-	Status      string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID           string
+	ReporterName string
+	Description  string
+	Status       string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
