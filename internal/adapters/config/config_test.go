@@ -15,6 +15,10 @@ func TestLoad_Defaults(t *testing.T) {
 	t.Setenv("HTTP_READ_TIMEOUT", "")
 	t.Setenv("HTTP_WRITE_TIMEOUT", "")
 	t.Setenv("HTTP_IDLE_TIMEOUT", "")
+	t.Setenv("TUS_CLEANUP_ENABLED", "")
+	t.Setenv("TUS_CLEANUP_OBJECT_PREFIX", "")
+	t.Setenv("TUS_CLEANUP_GRACE_PERIOD", "")
+	t.Setenv("TUS_CLEANUP_INTERVAL", "")
 
 	cfg, err := Load()
 	if err != nil {
@@ -25,6 +29,15 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 	if cfg.RateLimit.RPS <= 0 || cfg.RateLimit.Burst <= 0 {
 		t.Fatalf("expected positive rate limit defaults")
+	}
+	if !cfg.TusCleanup.Enabled {
+		t.Fatalf("expected cleanup enabled by default")
+	}
+	if cfg.TusCleanup.ObjectPrefix == "" {
+		t.Fatalf("expected non-empty cleanup prefix")
+	}
+	if cfg.TusCleanup.GracePeriod <= 0 || cfg.TusCleanup.Interval <= 0 {
+		t.Fatalf("expected positive cleanup durations")
 	}
 }
 
@@ -52,5 +65,16 @@ func TestLoad_ProdRequiresSecrets(t *testing.T) {
 	_, err := Load()
 	if err == nil {
 		t.Fatalf("expected error in prod when required vars are empty")
+	}
+}
+
+func TestLoad_ValidatesTusCleanupDurationsAndPrefix(t *testing.T) {
+	t.Setenv("TUS_CLEANUP_GRACE_PERIOD", "0s")
+	t.Setenv("TUS_CLEANUP_INTERVAL", "0s")
+	t.Setenv("TUS_CLEANUP_OBJECT_PREFIX", " ")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatalf("expected error for invalid tus cleanup settings")
 	}
 }

@@ -49,6 +49,13 @@ type Config struct {
 		AccessKey string
 		SecretKey string
 	}
+
+	TusCleanup struct {
+		Enabled      bool
+		ObjectPrefix string
+		GracePeriod  time.Duration
+		Interval     time.Duration
+	}
 }
 
 func Load() (Config, error) {
@@ -81,6 +88,11 @@ func Load() (Config, error) {
 	c.S3.AccessKey = getString("S3_ACCESS_KEY", "")
 	c.S3.SecretKey = getString("S3_SECRET_KEY", "")
 
+	c.TusCleanup.Enabled = getBool("TUS_CLEANUP_ENABLED", true)
+	c.TusCleanup.ObjectPrefix = getString("TUS_CLEANUP_OBJECT_PREFIX", "tus/")
+	c.TusCleanup.GracePeriod = getDuration("TUS_CLEANUP_GRACE_PERIOD", 6*time.Hour)
+	c.TusCleanup.Interval = getDuration("TUS_CLEANUP_INTERVAL", 30*time.Minute)
+
 	if c.HTTP.Addr == "" {
 		return Config{}, errors.New("HTTP_ADDR is empty")
 	}
@@ -89,6 +101,13 @@ func Load() (Config, error) {
 	}
 	if c.JWT.AccessTTL <= 0 || c.JWT.RefreshTTL <= 0 {
 		return Config{}, errors.New("jwt ttls must be positive")
+	}
+	if c.TusCleanup.GracePeriod <= 0 || c.TusCleanup.Interval <= 0 {
+		return Config{}, errors.New("tus cleanup durations must be positive")
+	}
+	c.TusCleanup.ObjectPrefix = strings.TrimSpace(c.TusCleanup.ObjectPrefix)
+	if c.TusCleanup.ObjectPrefix == "" {
+		return Config{}, errors.New("tus cleanup object prefix must not be empty")
 	}
 
 	// In non-local environments we require full configuration.
@@ -151,6 +170,21 @@ func getDuration(key string, def time.Duration) time.Duration {
 		return def
 	}
 	return d
+}
+
+func getBool(key string, def bool) bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	if v == "" {
+		return def
+	}
+	switch v {
+	case "1", "true", "yes", "y", "on":
+		return true
+	case "0", "false", "no", "n", "off":
+		return false
+	default:
+		return def
+	}
 }
 
 func getCSV(key, def string) []string {
