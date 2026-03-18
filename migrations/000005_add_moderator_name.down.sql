@@ -1,6 +1,0 @@
-BEGIN;
-
-ALTER TABLE moderators
-  DROP COLUMN IF EXISTS name;
-
-COMMIT;
