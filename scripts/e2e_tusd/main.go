@@ -73,17 +73,10 @@ func main() {
 		fatalf("%v", err)
 	}
 
-	fmt.Println("==> register")
-	email := "e2e+" + newUUID() + "@example.com"
-	accessToken, err := register(ctx, httpc, baseURL, email, "E2E User", "P@ssw0rd!")
+	fmt.Println("==> create public report")
+	reportID, err := createPublicReport(ctx, httpc, baseURL, "E2E User", "upload via tusd")
 	if err != nil {
-		fatalf("register: %v", err)
-	}
-
-	fmt.Println("==> create report")
-	reportID, err := createReport(ctx, httpc, baseURL, accessToken, "E2E tus", "upload via tusd")
-	if err != nil {
-		fatalf("create report: %v", err)
+		fatalf("create public report: %v", err)
 	}
 	fmt.Printf("report_id=%s\n", reportID)
 
@@ -95,9 +88,9 @@ func main() {
 		"idempotency_key " + b64("idem-"+newUUID()),
 	}, ",")
 
-	uploadURL, err := tusCreate(ctx, httpc, composeFile, baseURL+"/api/v1/uploads", accessToken, 4, meta)
+	uploadURL, err := tusCreate(ctx, httpc, composeFile, baseURL+"/api/v1/uploads", 4, meta)
 	if err != nil {
-		uploadURL, err = tusCreate(ctx, httpc, composeFile, baseURL+"/api/v1/uploads/", accessToken, 4, meta)
+		uploadURL, err = tusCreate(ctx, httpc, composeFile, baseURL+"/api/v1/uploads/", 4, meta)
 	}
 	if err != nil {
 		fatalf("tus create failed: %v", err)
@@ -105,16 +98,16 @@ func main() {
 	fmt.Printf("upload_url=%s\n", uploadURL)
 
 	fmt.Println("==> tus PATCH data")
-	if err := tusPatch(ctx, httpc, uploadURL, accessToken, []byte{0x89, 0x50, 0x4E, 0x47}); err != nil {
+	if err := tusPatch(ctx, httpc, uploadURL, []byte{0x89, 0x50, 0x4E, 0x47}); err != nil {
 		fatalf("tus patch: %v", err)
 	}
 
-	fmt.Println("==> wait for finalize + list attachments")
-	attID, downloadURL, err := waitAttachment(ctx, httpc, baseURL, accessToken, reportID, 2*time.Second)
+	fmt.Println("==> wait for finalize (db check)")
+	attID, err := waitAttachmentInDB(ctx, composeFile, reportID, 2*time.Second)
 	if err != nil {
 		fatalf("%v", err)
 	}
-	fmt.Printf("OK attachment_id=%s download_url=%s\n", attID, downloadURL)
+	fmt.Printf("OK attachment_id=%s\n", attID)
 }
 
 func fatalf(format string, args ...any) {
@@ -219,7 +212,10 @@ func waitReady(ctx context.Context, httpc *http.Client, baseURL string, interval
 	defer t.Stop()
 
 	for {
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/readyz", nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/readyz", nil)
+		if err != nil {
+			return err
+		}
 		req.Header.Set("Accept", "application/json")
 		resp, err := httpc.Do(req)
 		if err == nil && resp != nil {
@@ -241,13 +237,18 @@ func waitReady(ctx context.Context, httpc *http.Client, baseURL string, interval
 	}
 }
 
-func register(ctx context.Context, httpc *http.Client, baseURL, email, name, password string) (string, error) {
-	body, _ := json.Marshal(map[string]any{
-		"email":    email,
-		"name":     name,
-		"password": password,
+func createPublicReport(ctx context.Context, httpc *http.Client, baseURL, reporterName, description string) (string, error) {
+	body, err := json.Marshal(map[string]any{
+		"reporter_name": reporterName,
+		"description":   description,
 	})
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/v1/auth/register", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/v1/public/reports", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := httpc.Do(req)
@@ -257,36 +258,6 @@ func register(ctx context.Context, httpc *http.Client, baseURL, email, name, pas
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return "", fmt.Errorf("unexpected status %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
-	}
-	var out struct {
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(out.AccessToken) == "" {
-		return "", errors.New("no access_token from register")
-	}
-	return out.AccessToken, nil
-}
-
-func createReport(ctx context.Context, httpc *http.Client, baseURL, accessToken, title, description string) (string, error) {
-	body, _ := json.Marshal(map[string]any{
-		"title":       title,
-		"description": description,
-	})
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/v1/reports", bytes.NewReader(body))
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	resp, err := httpc.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 		return "", fmt.Errorf("unexpected status %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
 	}
 	var out struct {
@@ -301,9 +272,11 @@ func createReport(ctx context.Context, httpc *http.Client, baseURL, accessToken,
 	return out.ID, nil
 }
 
-func tusCreate(ctx context.Context, httpc *http.Client, composeFile, url, accessToken string, uploadLen int, meta string) (string, error) {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
-	req.Header.Set("Authorization", "Bearer "+accessToken)
+func tusCreate(ctx context.Context, httpc *http.Client, composeFile, url string, uploadLen int, meta string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	if err != nil {
+		return "", err
+	}
 	req.Header.Set("Tus-Resumable", "1.0.0")
 	req.Header.Set("Upload-Length", fmt.Sprintf("%d", uploadLen))
 	req.Header.Set("Upload-Metadata", meta)
@@ -347,9 +320,11 @@ func dumpDockerLogsBestEffort(ctx context.Context, composeFile string) error {
 	return nil
 }
 
-func tusPatch(ctx context.Context, httpc *http.Client, uploadURL, accessToken string, data []byte) error {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPatch, uploadURL, bytes.NewReader(data))
-	req.Header.Set("Authorization", "Bearer "+accessToken)
+func tusPatch(ctx context.Context, httpc *http.Client, uploadURL string, data []byte) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, uploadURL, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
 	req.Header.Set("Tus-Resumable", "1.0.0")
 	req.Header.Set("Upload-Offset", "0")
 	req.Header.Set("Content-Type", "application/offset+octet-stream")
@@ -372,53 +347,37 @@ func tusPatch(ctx context.Context, httpc *http.Client, uploadURL, accessToken st
 	return nil
 }
 
-func waitAttachment(ctx context.Context, httpc *http.Client, baseURL, accessToken, reportID string, interval time.Duration) (attID, downloadURL string, err error) {
+func waitAttachmentInDB(ctx context.Context, composeFile, reportID string, interval time.Duration) (attID string, err error) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
 
 	for {
-		attID, downloadURL, ok := tryListAttachments(ctx, httpc, baseURL, accessToken, reportID)
+		attID, ok := tryFindAttachmentInDB(ctx, composeFile, reportID)
 		if ok {
-			return attID, downloadURL, nil
+			return attID, nil
 		}
 		select {
 		case <-ctx.Done():
-			return "", "", fmt.Errorf("timeout waiting for attachment finalize")
+			return "", fmt.Errorf("timeout waiting for attachment finalize")
 		case <-t.C:
 		}
 	}
 }
 
-func tryListAttachments(ctx context.Context, httpc *http.Client, baseURL, accessToken, reportID string) (attID, downloadURL string, ok bool) {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/v1/reports/"+reportID+"/attachments", nil)
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	resp, err := httpc.Do(req)
+func tryFindAttachmentInDB(ctx context.Context, composeFile, reportID string) (attID string, ok bool) {
+	c2, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	q := "SELECT id FROM attachments WHERE bug_report_id = '" + strings.ReplaceAll(reportID, "'", "''") + "' ORDER BY created_at DESC LIMIT 1;"
+	cmd := exec.CommandContext(c2, "docker", "compose", "-f", composeFile, "exec", "-T", "postgres", "psql", "-U", "bug", "-d", "bugdb", "-At", "-c", q)
+	out, err := cmd.Output()
 	if err != nil {
-		return "", "", false
+		return "", false
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", "", false
+	id := strings.TrimSpace(string(out))
+	if id == "" {
+		return "", false
 	}
-	var out struct {
-		Items []struct {
-			ID          string `json:"id"`
-			DownloadURL string `json:"download_url"`
-		} `json:"items"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", "", false
-	}
-	if len(out.Items) < 1 {
-		return "", "", false
-	}
-	id := strings.TrimSpace(out.Items[0].ID)
-	dl := strings.TrimSpace(out.Items[0].DownloadURL)
-	if id == "" || dl == "" {
-		return "", "", false
-	}
-	return id, dl, true
+	return id, true
 }
 
 func newUUID() string {
