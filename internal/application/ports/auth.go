@@ -40,8 +40,8 @@ type Clock interface {
 
 type UserRecord struct {
 	ID           string
-	Email        string
 	Name         string
+	Email        string
 	PasswordHash string
 	Role         string
 	CreatedAt    time.Time

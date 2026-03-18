@@ -36,6 +36,17 @@ func (m *memAttachments) ListByReport(_ context.Context, reportID string) ([]por
 	return append([]ports.AttachmentRecord(nil), m.byReportID[reportID]...), nil
 }
 
+func (m *memAttachments) ExistsByStorageKey(_ context.Context, storageKey string) (bool, error) {
+	for _, list := range m.byReportID {
+		for _, a := range list {
+			if a.StorageKey == storageKey {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 type memReports struct {
 	byID map[string]ports.ReportRecord
 }
@@ -50,9 +61,6 @@ func (m *memReports) GetByID(_ context.Context, id string) (ports.ReportRecord, 
 }
 func (m *memReports) UpdateStatus(_ context.Context, _ string, _ string, _ time.Time) error {
 	return nil
-}
-func (m *memReports) ListByUser(_ context.Context, _ string, _ ports.ReportListFilter) ([]ports.ReportRecord, int, error) {
-	return nil, 0, nil
 }
 func (m *memReports) ListAll(_ context.Context, _ ports.ReportListFilter) ([]ports.ReportRecord, int, error) {
 	return nil, 0, nil
@@ -96,7 +104,7 @@ func (r *fakeRandom) NewToken() (string, error) { return "unused", nil }
 func TestService_Upload_ValidatesMimeAndSize(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	reports := &memReports{byID: map[string]ports.ReportRecord{
-		"r1": {ID: "r1", UserID: "u1", CreatedAt: now, UpdatedAt: now},
+		"r1": {ID: "r1", ReporterName: "Ivan", CreatedAt: now, UpdatedAt: now},
 	}}
 	atts := &memAttachments{byReportID: map[string][]ports.AttachmentRecord{}, byIdemKey: map[string]ports.AttachmentRecord{}}
 	st := &memStorage{}
@@ -112,8 +120,6 @@ func TestService_Upload_ValidatesMimeAndSize(t *testing.T) {
 	})
 
 	_, err := svc.Upload(context.Background(), UploadRequest{
-		ActorRole:      "user",
-		ActorID:        "u1",
 		ReportID:       "r1",
 		FileName:       "x.png",
 		ContentType:    "image/jpeg",
@@ -125,8 +131,6 @@ func TestService_Upload_ValidatesMimeAndSize(t *testing.T) {
 	}
 
 	_, err = svc.Upload(context.Background(), UploadRequest{
-		ActorRole:      "user",
-		ActorID:        "u1",
 		ReportID:       "r1",
 		FileName:       "x.png",
 		ContentType:    "image/png",
@@ -141,7 +145,7 @@ func TestService_Upload_ValidatesMimeAndSize(t *testing.T) {
 func TestService_Upload_Idempotent(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	reports := &memReports{byID: map[string]ports.ReportRecord{
-		"r1": {ID: "r1", UserID: "u1", CreatedAt: now, UpdatedAt: now},
+		"r1": {ID: "r1", ReporterName: "Ivan", CreatedAt: now, UpdatedAt: now},
 	}}
 	atts := &memAttachments{byReportID: map[string][]ports.AttachmentRecord{}, byIdemKey: map[string]ports.AttachmentRecord{}}
 	st := &memStorage{}
@@ -157,8 +161,6 @@ func TestService_Upload_Idempotent(t *testing.T) {
 	})
 
 	req := UploadRequest{
-		ActorRole:      "user",
-		ActorID:        "u1",
 		ReportID:       "r1",
 		FileName:       "../x.png",
 		ContentType:    "image/png",
@@ -182,7 +184,7 @@ func TestService_Upload_Idempotent(t *testing.T) {
 func TestService_Upload_CleansUpStorageOnDBError(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	reports := &memReports{byID: map[string]ports.ReportRecord{
-		"r1": {ID: "r1", UserID: "u1", CreatedAt: now, UpdatedAt: now},
+		"r1": {ID: "r1", ReporterName: "Ivan", CreatedAt: now, UpdatedAt: now},
 	}}
 	atts := &memAttachments{byReportID: map[string][]ports.AttachmentRecord{}, byIdemKey: map[string]ports.AttachmentRecord{}, failCreate: true}
 	st := &memStorage{}
@@ -198,8 +200,6 @@ func TestService_Upload_CleansUpStorageOnDBError(t *testing.T) {
 	})
 
 	_, err := svc.Upload(context.Background(), UploadRequest{
-		ActorRole:      "user",
-		ActorID:        "u1",
 		ReportID:       "r1",
 		FileName:       "x.png",
 		ContentType:    "image/png",
@@ -217,7 +217,7 @@ func TestService_Upload_CleansUpStorageOnDBError(t *testing.T) {
 func TestService_Upload_SanitizesStorageKeyParts(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	reports := &memReports{byID: map[string]ports.ReportRecord{
-		"../r1": {ID: "../r1", UserID: "u1", CreatedAt: now, UpdatedAt: now},
+		"../r1": {ID: "../r1", ReporterName: "Ivan", CreatedAt: now, UpdatedAt: now},
 	}}
 	atts := &memAttachments{byReportID: map[string][]ports.AttachmentRecord{}, byIdemKey: map[string]ports.AttachmentRecord{}}
 	st := &memStorage{}
@@ -233,8 +233,6 @@ func TestService_Upload_SanitizesStorageKeyParts(t *testing.T) {
 	})
 
 	got, err := svc.Upload(context.Background(), UploadRequest{
-		ActorRole:      "user",
-		ActorID:        "u1",
 		ReportID:       "../r1",
 		FileName:       "x.png",
 		ContentType:    "image/png",
@@ -255,7 +253,7 @@ func TestService_Upload_SanitizesStorageKeyParts(t *testing.T) {
 func TestService_Finalize_CreatesRecordWithoutStoragePut(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	reports := &memReports{byID: map[string]ports.ReportRecord{
-		"r1": {ID: "r1", UserID: "u1", CreatedAt: now, UpdatedAt: now},
+		"r1": {ID: "r1", ReporterName: "Ivan", CreatedAt: now, UpdatedAt: now},
 	}}
 	atts := &memAttachments{byReportID: map[string][]ports.AttachmentRecord{}, byIdemKey: map[string]ports.AttachmentRecord{}}
 
@@ -270,8 +268,6 @@ func TestService_Finalize_CreatesRecordWithoutStoragePut(t *testing.T) {
 	})
 
 	got, err := svc.Finalize(context.Background(), FinalizeRequest{
-		ActorRole:   "user",
-		ActorID:     "u1",
 		ReportID:    "r1",
 		UploadID:    "upload-1",
 		FileName:    "../x.png",
@@ -290,7 +286,7 @@ func TestService_Finalize_CreatesRecordWithoutStoragePut(t *testing.T) {
 func TestService_ListForReport_EnforcesAccess(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	reports := &memReports{byID: map[string]ports.ReportRecord{
-		"r1": {ID: "r1", UserID: "u1", CreatedAt: now, UpdatedAt: now},
+		"r1": {ID: "r1", ReporterName: "Ivan", CreatedAt: now, UpdatedAt: now},
 	}}
 	atts := &memAttachments{
 		byReportID: map[string][]ports.AttachmentRecord{
@@ -317,7 +313,7 @@ func TestService_ListForReport_EnforcesAccess(t *testing.T) {
 	})
 
 	_, err := svc.ListForReport(context.Background(), ListForReportRequest{
-		ActorRole: "user",
+		ActorRole: "guest",
 		ActorID:   "u2",
 		ReportID:  "r1",
 	})
@@ -326,7 +322,7 @@ func TestService_ListForReport_EnforcesAccess(t *testing.T) {
 	}
 
 	list, err := svc.ListForReport(context.Background(), ListForReportRequest{
-		ActorRole: "user",
+		ActorRole: "moderator",
 		ActorID:   "u1",
 		ReportID:  "r1",
 	})

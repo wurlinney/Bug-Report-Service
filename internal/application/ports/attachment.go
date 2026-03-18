@@ -9,6 +9,7 @@ type AttachmentRepository interface {
 	Create(ctx context.Context, a AttachmentRecord) error
 	GetByIdempotencyKey(ctx context.Context, reportID string, key string) (a AttachmentRecord, found bool, err error)
 	ListByReport(ctx context.Context, reportID string) ([]AttachmentRecord, error)
+	ExistsByStorageKey(ctx context.Context, storageKey string) (bool, error)
 }
 
 type AttachmentRecord struct {
@@ -20,8 +21,6 @@ type AttachmentRecord struct {
 	StorageKey     string
 	CreatedAt      time.Time
 	IdempotencyKey string
-	UploadedByID   string
-	UploadedByRole string
 }
 
 type ObjectStorage interface {

@@ -6,7 +6,6 @@ import (
 	"regexp"
 	"strings"
 
-	"bug-report-service/internal/application/policy"
 	"bug-report-service/internal/application/ports"
 )
 
@@ -31,38 +30,28 @@ func NewService(deps Deps) *Service {
 	return &Service{deps: deps}
 }
 
-func (s *Service) Upload(ctx context.Context, req UploadRequest) (AttachmentDTO, error) {
-	if req.ActorRole == "" || req.ActorID == "" || req.ReportID == "" {
-		return AttachmentDTO{}, ErrBadInput
+func (s *Service) Upload(ctx context.Context, req UploadRequest) (DTO, error) {
+	if req.ReportID == "" {
+		return DTO{}, ErrBadInput
 	}
 	if req.ContentType == "" || len(req.Data) == 0 {
-		return AttachmentDTO{}, ErrBadInput
+		return DTO{}, ErrBadInput
 	}
 	if s.deps.MaxFileSize > 0 && int64(len(req.Data)) > s.deps.MaxFileSize {
-		return AttachmentDTO{}, ErrBadInput
+		return DTO{}, ErrBadInput
 	}
 	if _, ok := s.deps.AllowedMIMEs[req.ContentType]; !ok {
-		return AttachmentDTO{}, ErrBadInput
+		return DTO{}, ErrBadInput
 	}
 
-	rep, found, err := s.deps.Reports.GetByID(ctx, req.ReportID)
-	if err != nil {
-		return AttachmentDTO{}, err
+	if err := s.ensureReportExists(ctx, req.ReportID); err != nil {
+		return DTO{}, err
 	}
-	if !found {
-		return AttachmentDTO{}, ErrNotFound
-	}
-	if !policy.CanUserViewReport(req.ActorRole, req.ActorID, rep.UserID) {
-		return AttachmentDTO{}, ErrForbidden
-	}
-
 	// Idempotency (best-effort): return existing attachment for same report+key.
-	if req.IdempotencyKey != "" {
-		if existing, ok, err := s.deps.Attachments.GetByIdempotencyKey(ctx, req.ReportID, req.IdempotencyKey); err != nil {
-			return AttachmentDTO{}, err
-		} else if ok {
-			return toDTO(existing), nil
-		}
+	if existing, ok, err := s.getByIdempotencyKey(ctx, req.ReportID, req.IdempotencyKey); err != nil {
+		return DTO{}, err
+	} else if ok {
+		return toDTO(existing), nil
 	}
 
 	now := s.deps.Clock.Now()
@@ -71,7 +60,7 @@ func (s *Service) Upload(ctx context.Context, req UploadRequest) (AttachmentDTO,
 
 	// 1) upload bytes to storage
 	if err := s.deps.Storage.PutObject(ctx, storageKey, req.ContentType, req.Data); err != nil {
-		return AttachmentDTO{}, err
+		return DTO{}, err
 	}
 
 	// 2) persist metadata
@@ -84,51 +73,39 @@ func (s *Service) Upload(ctx context.Context, req UploadRequest) (AttachmentDTO,
 		StorageKey:     storageKey,
 		CreatedAt:      now,
 		IdempotencyKey: req.IdempotencyKey,
-		UploadedByID:   req.ActorID,
-		UploadedByRole: req.ActorRole,
 	}
 	if err := s.deps.Attachments.Create(ctx, rec); err != nil {
 		_ = s.deps.Storage.DeleteObject(ctx, storageKey) // cleanup on DB failure
-		return AttachmentDTO{}, err
+		return DTO{}, err
 	}
 
 	return toDTO(rec), nil
 }
 
-func (s *Service) Finalize(ctx context.Context, req FinalizeRequest) (AttachmentDTO, error) {
-	if req.ActorRole == "" || req.ActorID == "" || req.ReportID == "" {
-		return AttachmentDTO{}, ErrBadInput
+func (s *Service) Finalize(ctx context.Context, req FinalizeRequest) (DTO, error) {
+	if req.ReportID == "" {
+		return DTO{}, ErrBadInput
 	}
 	if strings.TrimSpace(req.UploadID) == "" {
-		return AttachmentDTO{}, ErrBadInput
+		return DTO{}, ErrBadInput
 	}
 	if req.ContentType == "" || req.FileSize <= 0 || strings.TrimSpace(req.StorageKey) == "" {
-		return AttachmentDTO{}, ErrBadInput
+		return DTO{}, ErrBadInput
 	}
 	if s.deps.MaxFileSize > 0 && req.FileSize > s.deps.MaxFileSize {
-		return AttachmentDTO{}, ErrBadInput
+		return DTO{}, ErrBadInput
 	}
 	if _, ok := s.deps.AllowedMIMEs[req.ContentType]; !ok {
-		return AttachmentDTO{}, ErrBadInput
+		return DTO{}, ErrBadInput
 	}
 
-	rep, found, err := s.deps.Reports.GetByID(ctx, req.ReportID)
-	if err != nil {
-		return AttachmentDTO{}, err
+	if err := s.ensureReportExists(ctx, req.ReportID); err != nil {
+		return DTO{}, err
 	}
-	if !found {
-		return AttachmentDTO{}, ErrNotFound
-	}
-	if !policy.CanUserViewReport(req.ActorRole, req.ActorID, rep.UserID) {
-		return AttachmentDTO{}, ErrForbidden
-	}
-
-	if req.IdempotencyKey != "" {
-		if existing, ok, err := s.deps.Attachments.GetByIdempotencyKey(ctx, req.ReportID, req.IdempotencyKey); err != nil {
-			return AttachmentDTO{}, err
-		} else if ok {
-			return toDTO(existing), nil
-		}
+	if existing, ok, err := s.getByIdempotencyKey(ctx, req.ReportID, req.IdempotencyKey); err != nil {
+		return DTO{}, err
+	} else if ok {
+		return toDTO(existing), nil
 	}
 
 	now := s.deps.Clock.Now()
@@ -144,28 +121,26 @@ func (s *Service) Finalize(ctx context.Context, req FinalizeRequest) (Attachment
 		StorageKey:     strings.TrimSpace(req.StorageKey),
 		CreatedAt:      now,
 		IdempotencyKey: req.IdempotencyKey,
-		UploadedByID:   req.ActorID,
-		UploadedByRole: req.ActorRole,
 	}
 	if err := s.deps.Attachments.Create(ctx, rec); err != nil {
-		return AttachmentDTO{}, err
+		return DTO{}, err
 	}
 	return toDTO(rec), nil
 }
 
-func (s *Service) ListForReport(ctx context.Context, req ListForReportRequest) ([]AttachmentDTO, error) {
+func (s *Service) ListForReport(ctx context.Context, req ListForReportRequest) ([]DTO, error) {
 	if req.ActorRole == "" || req.ActorID == "" || req.ReportID == "" {
 		return nil, ErrBadInput
 	}
 
-	rep, found, err := s.deps.Reports.GetByID(ctx, req.ReportID)
+	_, found, err := s.deps.Reports.GetByID(ctx, req.ReportID)
 	if err != nil {
 		return nil, err
 	}
 	if !found {
 		return nil, ErrNotFound
 	}
-	if !policy.CanUserViewReport(req.ActorRole, req.ActorID, rep.UserID) {
+	if req.ActorRole != "moderator" {
 		return nil, ErrForbidden
 	}
 
@@ -173,15 +148,15 @@ func (s *Service) ListForReport(ctx context.Context, req ListForReportRequest) (
 	if err != nil {
 		return nil, err
 	}
-	out := make([]AttachmentDTO, 0, len(items))
+	out := make([]DTO, 0, len(items))
 	for _, a := range items {
 		out = append(out, toDTO(a))
 	}
 	return out, nil
 }
 
-func toDTO(a ports.AttachmentRecord) AttachmentDTO {
-	return AttachmentDTO{
+func toDTO(a ports.AttachmentRecord) DTO {
+	return DTO{
 		ID:          a.ID,
 		ReportID:    a.ReportID,
 		FileName:    a.FileName,
@@ -190,6 +165,24 @@ func toDTO(a ports.AttachmentRecord) AttachmentDTO {
 		StorageKey:  a.StorageKey,
 		CreatedAt:   a.CreatedAt,
 	}
+}
+
+func (s *Service) ensureReportExists(ctx context.Context, reportID string) error {
+	_, found, err := s.deps.Reports.GetByID(ctx, reportID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Service) getByIdempotencyKey(ctx context.Context, reportID, idempotencyKey string) (ports.AttachmentRecord, bool, error) {
+	if idempotencyKey == "" {
+		return ports.AttachmentRecord{}, false, nil
+	}
+	return s.deps.Attachments.GetByIdempotencyKey(ctx, reportID, idempotencyKey)
 }
 
 func buildStorageKey(reportID, attachmentID, fileName string) string {

@@ -14,26 +14,23 @@ type ReportRepository interface {
 	Create(ctx context.Context, r ReportRecord) error
 	GetByID(ctx context.Context, id string) (r ReportRecord, found bool, err error)
 	UpdateStatus(ctx context.Context, id string, status string, updatedAt time.Time) error
-	ListByUser(ctx context.Context, userID string, f ReportListFilter) (items []ReportRecord, total int, err error)
 	ListAll(ctx context.Context, f ReportListFilter) (items []ReportRecord, total int, err error)
 }
 
 type ReportRecord struct {
-	ID          string
-	UserID      string
-	UserName    string
-	Title       string
-	Description string
-	Status      string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID           string
+	ReporterName string
+	Description  string
+	Status       string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 type ReportListFilter struct {
-	Status    *string
-	UserID    *string
-	Query     *string
-	CreatedAt *TimeRange
+	Status       *string
+	ReporterName *string
+	Query        *string
+	CreatedAt    *TimeRange
 
 	SortBy   string // created_at|updated_at
 	SortDesc bool
@@ -54,7 +51,7 @@ func ApplyReportListFilter(items []ReportRecord, f ReportListFilter) ([]ReportRe
 		if f.Status != nil && r.Status != *f.Status {
 			continue
 		}
-		if f.UserID != nil && r.UserID != *f.UserID {
+		if f.ReporterName != nil && r.ReporterName != *f.ReporterName {
 			continue
 		}
 		if f.CreatedAt != nil {
@@ -68,7 +65,7 @@ func ApplyReportListFilter(items []ReportRecord, f ReportListFilter) ([]ReportRe
 		if f.Query != nil {
 			q := strings.ToLower(strings.TrimSpace(*f.Query))
 			if q != "" {
-				hay := strings.ToLower(r.Title + " " + r.Description)
+				hay := strings.ToLower(r.ReporterName + " " + r.Description)
 				if !strings.Contains(hay, q) {
 					continue
 				}

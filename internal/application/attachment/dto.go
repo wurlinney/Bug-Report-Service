@@ -3,9 +3,7 @@ package attachment
 import "time"
 
 type UploadRequest struct {
-	ActorRole string
-	ActorID   string
-	ReportID  string
+	ReportID string
 
 	FileName    string
 	ContentType string
@@ -17,9 +15,7 @@ type UploadRequest struct {
 // FinalizeRequest is used when the file bytes are uploaded externally (e.g. tusd),
 // and we only need to validate access and persist metadata in DB.
 type FinalizeRequest struct {
-	ActorRole string
-	ActorID   string
-	ReportID  string
+	ReportID string
 
 	UploadID       string
 	FileName       string
@@ -29,7 +25,7 @@ type FinalizeRequest struct {
 	IdempotencyKey string
 }
 
-type AttachmentDTO struct {
+type DTO struct {
 	ID          string
 	ReportID    string
 	FileName    string
