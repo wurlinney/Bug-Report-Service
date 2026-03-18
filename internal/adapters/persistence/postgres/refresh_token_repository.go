@@ -21,7 +21,7 @@ func NewRefreshTokenRepository(db *pgxpool.Pool) *RefreshTokenRepository {
 
 func (r *RefreshTokenRepository) Save(ctx context.Context, rt ports.RefreshTokenRecord) error {
 	const q = `
-INSERT INTO refresh_tokens (id, user_id, role, token_hash, expires_at, created_at, revoked_at, replaced_by)
+INSERT INTO refresh_tokens (id, moderator_id, role, token_hash, expires_at, created_at, revoked_at, replaced_by)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 `
 	_, err := r.db.Exec(ctx, q,
@@ -39,7 +39,7 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 
 func (r *RefreshTokenRepository) GetActiveByID(ctx context.Context, id string) (ports.RefreshTokenRecord, bool, error) {
 	const q = `
-SELECT id, user_id, role, token_hash, expires_at, created_at, revoked_at, replaced_by
+SELECT id, moderator_id, role, token_hash, expires_at, created_at, revoked_at, replaced_by
 FROM refresh_tokens
 WHERE id = $1 AND revoked_at IS NULL
 `

@@ -17,37 +17,30 @@ type ReportRepository struct {
 	db *pgxpool.Pool
 }
 
+type reportScanner interface {
+	Scan(dest ...any) error
+}
+
 func NewReportRepository(db *pgxpool.Pool) *ReportRepository {
 	return &ReportRepository{db: db}
 }
 
 func (r *ReportRepository) Create(ctx context.Context, rep ports.ReportRecord) error {
 	const q = `
-INSERT INTO bug_reports (id, user_id, title, description, status, created_at, updated_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7)
+INSERT INTO bug_reports (id, reporter_name, description, status, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6)
 `
-	_, err := r.db.Exec(ctx, q, rep.ID, rep.UserID, rep.Title, rep.Description, rep.Status, rep.CreatedAt, rep.UpdatedAt)
+	_, err := r.db.Exec(ctx, q, rep.ID, rep.ReporterName, rep.Description, rep.Status, rep.CreatedAt, rep.UpdatedAt)
 	return err
 }
 
 func (r *ReportRepository) GetByID(ctx context.Context, id string) (ports.ReportRecord, bool, error) {
 	const q = `
-SELECT r.id, r.user_id, u.name, r.title, r.description, r.status, r.created_at, r.updated_at
+SELECT r.id, r.reporter_name, r.description, r.status, r.created_at, r.updated_at
 FROM bug_reports r
-JOIN users u ON u.id = r.user_id
 WHERE r.id = $1
 `
-	var rep ports.ReportRecord
-	err := r.db.QueryRow(ctx, q, id).Scan(
-		&rep.ID,
-		&rep.UserID,
-		&rep.UserName,
-		&rep.Title,
-		&rep.Description,
-		&rep.Status,
-		&rep.CreatedAt,
-		&rep.UpdatedAt,
-	)
+	rep, err := scanReport(r.db.QueryRow(ctx, q, id))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ports.ReportRecord{}, false, nil
@@ -71,12 +64,6 @@ WHERE id = $1
 		return ports.ErrNotFound
 	}
 	return nil
-}
-
-func (r *ReportRepository) ListByUser(ctx context.Context, userID string, f ports.ReportListFilter) ([]ports.ReportRecord, int, error) {
-	f2 := f
-	f2.UserID = &userID
-	return r.list(ctx, f2)
 }
 
 func (r *ReportRepository) ListAll(ctx context.Context, f ports.ReportListFilter) ([]ports.ReportRecord, int, error) {
@@ -113,14 +100,11 @@ func (r *ReportRepository) list(ctx context.Context, f ports.ReportListFilter) (
 
 	// list
 	args2 := append(append([]any{}, args...), limit, offset)
-	listQ := fmt.Sprintf(`
-SELECT r.id, r.user_id, u.name, r.title, r.description, r.status, r.created_at, r.updated_at
-FROM bug_reports r
-JOIN users u ON u.id = r.user_id
-%s
-ORDER BY %s %s
-LIMIT $%d OFFSET $%d
-`, where, sortCol, dir, len(args)+1, len(args)+2)
+	listQ := `
+SELECT r.id, r.reporter_name, r.description, r.status, r.created_at, r.updated_at
+FROM bug_reports r` + where + `
+ORDER BY ` + sortCol + ` ` + dir + `
+LIMIT ` + fmt.Sprintf("$%d", len(args)+1) + ` OFFSET ` + fmt.Sprintf("$%d", len(args)+2)
 
 	rows, err := r.db.Query(ctx, listQ, args2...)
 	if err != nil {
@@ -130,8 +114,8 @@ LIMIT $%d OFFSET $%d
 
 	var out []ports.ReportRecord
 	for rows.Next() {
-		var rep ports.ReportRecord
-		if err := rows.Scan(&rep.ID, &rep.UserID, &rep.UserName, &rep.Title, &rep.Description, &rep.Status, &rep.CreatedAt, &rep.UpdatedAt); err != nil {
+		rep, err := scanReport(rows)
+		if err != nil {
 			return nil, 0, err
 		}
 		out = append(out, rep)
@@ -153,14 +137,14 @@ func buildReportWhere(f ports.ReportListFilter) (string, []any) {
 	if f.Status != nil && strings.TrimSpace(*f.Status) != "" {
 		parts = append(parts, "r.status = "+addArg(strings.TrimSpace(*f.Status)))
 	}
-	if f.UserID != nil && strings.TrimSpace(*f.UserID) != "" {
-		parts = append(parts, "r.user_id = "+addArg(strings.TrimSpace(*f.UserID)))
+	if f.ReporterName != nil && strings.TrimSpace(*f.ReporterName) != "" {
+		parts = append(parts, "r.reporter_name ILIKE "+addArg("%"+strings.TrimSpace(*f.ReporterName)+"%"))
 	}
 	if f.Query != nil && strings.TrimSpace(*f.Query) != "" {
 		q := "%" + strings.TrimSpace(*f.Query) + "%"
 		p1 := addArg(q)
 		p2 := addArg(q)
-		parts = append(parts, "(r.title ILIKE "+p1+" OR r.description ILIKE "+p2+")")
+		parts = append(parts, "(r.reporter_name ILIKE "+p1+" OR r.description ILIKE "+p2+")")
 	}
 	if f.CreatedAt != nil {
 		if f.CreatedAt.From != nil {
@@ -175,4 +159,20 @@ func buildReportWhere(f ports.ReportListFilter) (string, []any) {
 		return "", args
 	}
 	return " WHERE " + strings.Join(parts, " AND "), args
+}
+
+func scanReport(s reportScanner) (ports.ReportRecord, error) {
+	var rep ports.ReportRecord
+	err := s.Scan(
+		&rep.ID,
+		&rep.ReporterName,
+		&rep.Description,
+		&rep.Status,
+		&rep.CreatedAt,
+		&rep.UpdatedAt,
+	)
+	if err != nil {
+		return ports.ReportRecord{}, err
+	}
+	return rep, nil
 }
