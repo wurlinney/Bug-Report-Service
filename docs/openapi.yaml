@@ -1,15 +1,14 @@
 openapi: 3.0.3
 info:
   title: bug-report-service API
-  version: 0.1.0
+  version: 1.0.0
 servers:
   - url: http://localhost:8080
 tags:
   - name: Health
-  - name: Auth
-  - name: User
-  - name: Reports (user)
-  - name: Reports (moderator)
+  - name: Public
+  - name: Moderator Auth
+  - name: Moderator Reports
   - name: Uploads (tus)
 security:
   - bearerAuth: []
@@ -18,7 +17,8 @@ paths:
   /healthz:
     get:
       tags: [Health]
-      summary: Liveness probe
+      summary: Health check
+      security: []
       responses:
         "200":
           description: OK
@@ -27,12 +27,28 @@ paths:
               schema:
                 type: object
                 properties:
-                  status: { type: string }
+                  status: { type: string, example: ok }
+
+  /livez:
+    get:
+      tags: [Health]
+      summary: Liveness check
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
 
   /readyz:
     get:
       tags: [Health]
-      summary: Readiness probe
+      summary: Readiness check
+      security: []
       responses:
         "200":
           description: Ready
@@ -47,35 +63,100 @@ paths:
               schema:
                 $ref: "#/components/schemas/ReadyResponse"
 
-  /api/v1/auth/register:
+  /api/v1/public/reports:
     post:
-      tags: [Auth]
-      summary: Register user
+      tags: [Public]
+      summary: Create public bug report
       security: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/RegisterRequest"
+              $ref: "#/components/schemas/PublicCreateReportRequest"
       responses:
         "201":
-          description: Registered
+          description: Created
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AuthResponse"
+                $ref: "#/components/schemas/PublicCreateReportResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
-        "409":
-          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
         "500":
           $ref: "#/components/responses/InternalError"
 
-  /api/v1/auth/login:
+  /api/v1/uploads:
     post:
-      tags: [Auth]
-      summary: Login
+      tags: [Uploads (tus)]
+      summary: Create resumable upload (tus)
+      security: []
+      description: |
+        tus protocol endpoint. Use `Upload-Metadata` with keys:
+        - `report_id` (base64)
+        - `filename` (base64)
+        - `content_type` (base64)
+        - `idempotency_key` (base64, optional)
+      parameters:
+        - name: Tus-Resumable
+          in: header
+          required: true
+          schema: { type: string, example: "1.0.0" }
+        - name: Upload-Length
+          in: header
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: Upload-Metadata
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        "201":
+          description: Upload created
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          description: File too large
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/uploads/{uploadId}:
+    patch:
+      tags: [Uploads (tus)]
+      summary: Upload chunk (tus)
+      security: []
+      parameters:
+        - name: uploadId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: Tus-Resumable
+          in: header
+          required: true
+          schema: { type: string, example: "1.0.0" }
+        - name: Upload-Offset
+          in: header
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/offset+octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "204":
+          description: Chunk accepted
+
+  /api/v1/mod/auth/login:
+    post:
+      tags: [Moderator Auth]
+      summary: Moderator login
       security: []
       requestBody:
         required: true
@@ -94,13 +175,11 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
-        "500":
-          $ref: "#/components/responses/InternalError"
 
-  /api/v1/auth/refresh:
+  /api/v1/mod/auth/refresh:
     post:
-      tags: [Auth]
-      summary: Refresh access token
+      tags: [Moderator Auth]
+      summary: Moderator refresh token
       security: []
       requestBody:
         required: true
@@ -119,197 +198,37 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
-        "500":
-          $ref: "#/components/responses/InternalError"
 
-  /api/v1/me:
+  /api/v1/mod/me:
     get:
-      tags: [User]
-      summary: Current user profile
+      tags: [Moderator Auth]
+      summary: Current moderator profile
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/MeResponse"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-  /api/v1/reports:
-    post:
-      tags: [Reports (user)]
-      summary: Create bug report
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateReportRequest"
-      responses:
-        "201":
-          description: Created
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Report"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "500":
-          $ref: "#/components/responses/InternalError"
-    get:
-      tags: [Reports (user)]
-      summary: List my bug reports
-      parameters:
-        - $ref: "#/components/parameters/Limit"
-        - $ref: "#/components/parameters/Offset"
-        - $ref: "#/components/parameters/SortByReport"
-        - $ref: "#/components/parameters/SortDesc"
-        - $ref: "#/components/parameters/Status"
-        - $ref: "#/components/parameters/Q"
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ReportListResponse"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-  /api/v1/reports/{id}:
-    get:
-      tags: [Reports (user)]
-      summary: Get my bug report
-      parameters:
-        - $ref: "#/components/parameters/ID"
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Report"
+                $ref: "#/components/schemas/ModeratorProfile"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-  /api/v1/reports/{id}/messages:
-    get:
-      tags: [Reports (user)]
-      summary: List messages for my report
-      parameters:
-        - $ref: "#/components/parameters/ID"
-        - $ref: "#/components/parameters/Limit"
-        - $ref: "#/components/parameters/Offset"
-        - $ref: "#/components/parameters/SortDesc"
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/MessageListResponse"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "500":
-          $ref: "#/components/responses/InternalError"
-    post:
-      tags: [Reports (user)]
-      summary: Create message in my report
-      parameters:
-        - $ref: "#/components/parameters/ID"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateMessageRequest"
-      responses:
-        "201":
-          description: Created
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Message"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-  /api/v1/reports/{id}/attachments:
-    get:
-      tags: [Reports (user)]
-      summary: List attachments for my report (includes presigned download_url)
-      parameters:
-        - $ref: "#/components/parameters/ID"
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AttachmentListResponse"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "500":
-          $ref: "#/components/responses/InternalError"
 
   /api/v1/mod/reports:
     get:
-      tags: [Reports (moderator)]
-      summary: List all reports (moderator)
+      tags: [Moderator Reports]
+      summary: List reports
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Offset"
-        - $ref: "#/components/parameters/SortByReport"
+        - $ref: "#/components/parameters/SortBy"
         - $ref: "#/components/parameters/SortDesc"
         - $ref: "#/components/parameters/Status"
+        - $ref: "#/components/parameters/CreatedFrom"
+        - $ref: "#/components/parameters/CreatedTo"
+        - $ref: "#/components/parameters/ReporterName"
         - $ref: "#/components/parameters/Q"
-        - name: user_id
-          in: query
-          schema: { type: string }
-        - name: created_from
-          in: query
-          description: Unix seconds
-          schema: { type: integer, format: int64 }
-        - name: created_to
-          in: query
-          description: Unix seconds
-          schema: { type: integer, format: int64 }
       responses:
         "200":
           description: OK
@@ -321,15 +240,11 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "500":
-          $ref: "#/components/responses/InternalError"
 
   /api/v1/mod/reports/{id}:
     get:
-      tags: [Reports (moderator)]
-      summary: Get report (moderator)
+      tags: [Moderator Reports]
+      summary: Get report by id
       parameters:
         - $ref: "#/components/parameters/ID"
       responses:
@@ -345,14 +260,10 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "500":
-          $ref: "#/components/responses/InternalError"
 
   /api/v1/mod/reports/{id}/status:
     patch:
-      tags: [Reports (moderator)]
+      tags: [Moderator Reports]
       summary: Change report status
       parameters:
         - $ref: "#/components/parameters/ID"
@@ -370,47 +281,34 @@ paths:
               schema:
                 type: object
                 properties:
-                  status: { type: string }
+                  status: { type: string, example: ok }
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "500":
-          $ref: "#/components/responses/InternalError"
 
-  /api/v1/mod/reports/{id}/messages:
+  /api/v1/mod/reports/{id}/notes:
     get:
-      tags: [Reports (moderator)]
-      summary: List messages for report (moderator)
+      tags: [Moderator Reports]
+      summary: List internal notes
       parameters:
         - $ref: "#/components/parameters/ID"
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Offset"
-        - $ref: "#/components/parameters/SortDesc"
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/MessageListResponse"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "500":
-          $ref: "#/components/responses/InternalError"
+                $ref: "#/components/schemas/NoteListResponse"
     post:
-      tags: [Reports (moderator)]
-      summary: Create message in report (moderator)
+      tags: [Moderator Reports]
+      summary: Create internal note
       parameters:
         - $ref: "#/components/parameters/ID"
       requestBody:
@@ -418,29 +316,19 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CreateMessageRequest"
+              $ref: "#/components/schemas/CreateNoteRequest"
       responses:
         "201":
           description: Created
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Message"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "500":
-          $ref: "#/components/responses/InternalError"
+                $ref: "#/components/schemas/InternalNote"
 
   /api/v1/mod/reports/{id}/attachments:
     get:
-      tags: [Reports (moderator)]
-      summary: List attachments for report (moderator)
+      tags: [Moderator Reports]
+      summary: List report attachments
       parameters:
         - $ref: "#/components/parameters/ID"
       responses:
@@ -450,37 +338,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AttachmentListResponse"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-  /api/v1/uploads/:
-    post:
-      tags: [Uploads (tus)]
-      summary: Create a tus upload (tusd)
-      description: |
-        tus protocol endpoint. Create upload with headers:
-        - Tus-Resumable: 1.0.0
-        - Upload-Length: <bytes>
-        - Upload-Metadata: report_id <b64>,filename <b64>,content_type <b64>[,idempotency_key <b64>]
-      responses:
-        "201":
-          description: Created (Location header points to upload)
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "500":
-          $ref: "#/components/responses/InternalError"
 
 components:
   securitySchemes:
@@ -498,23 +355,33 @@ components:
     Limit:
       name: limit
       in: query
-      schema: { type: integer, format: int32, minimum: 0 }
+      schema: { type: integer, format: int32, minimum: 1, maximum: 100 }
     Offset:
       name: offset
       in: query
       schema: { type: integer, format: int32, minimum: 0 }
-    SortByReport:
+    SortBy:
       name: sort_by
       in: query
-      schema:
-        type: string
-        enum: [created_at, updated_at]
+      schema: { type: string, enum: [created_at, updated_at] }
     SortDesc:
       name: sort_desc
       in: query
       schema: { type: boolean }
     Status:
       name: status
+      in: query
+      schema: { type: string, enum: [new, in_review, resolved, rejected] }
+    CreatedFrom:
+      name: created_from
+      in: query
+      schema: { type: integer, format: int64 }
+    CreatedTo:
+      name: created_to
+      in: query
+      schema: { type: integer, format: int64 }
+    ReporterName:
+      name: reporter_name
       in: query
       schema: { type: string }
     Q:
@@ -524,7 +391,7 @@ components:
 
   responses:
     BadRequest:
-      description: Bad Request
+      description: Bad request
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -539,17 +406,17 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorResponse" }
     NotFound:
-      description: Not Found
-      content:
-        application/json:
-          schema: { $ref: "#/components/schemas/ErrorResponse" }
-    Conflict:
-      description: Conflict
+      description: Not found
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorResponse" }
     InternalError:
-      description: Internal Server Error
+      description: Internal error
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    TooManyRequests:
+      description: Too many requests
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -573,13 +440,19 @@ components:
           additionalProperties: { type: boolean }
         state: { type: string }
 
-    RegisterRequest:
+    PublicCreateReportRequest:
       type: object
-      required: [email, name, password]
+      required: [reporter_name]
       properties:
-        email: { type: string, format: email }
-        name: { type: string, minLength: 1 }
-        password: { type: string, minLength: 8 }
+        reporter_name: { type: string }
+        description: { type: string }
+
+    PublicCreateReportResponse:
+      allOf:
+        - $ref: "#/components/schemas/Report"
+        - type: object
+          properties:
+            message: { type: string, example: "Ваше обращение принято в работу" }
 
     LoginRequest:
       type: object
@@ -602,30 +475,21 @@ components:
         refresh_token_id: { type: string }
         refresh_token: { type: string }
 
-    MeResponse:
+    ModeratorProfile:
       type: object
       properties:
         id: { type: string }
-        email: { type: string }
         name: { type: string }
+        email: { type: string }
         role: { type: string }
         created_at: { type: integer, format: int64 }
         updated_at: { type: integer, format: int64 }
-
-    CreateReportRequest:
-      type: object
-      required: [title, description]
-      properties:
-        title: { type: string }
-        description: { type: string }
 
     Report:
       type: object
       properties:
         id: { type: string }
-        user_id: { type: string }
-        user_name: { type: string }
-        title: { type: string }
+        reporter_name: { type: string }
         description: { type: string }
         status: { type: string }
         created_at: { type: integer, format: int64 }
@@ -639,30 +503,6 @@ components:
           items: { $ref: "#/components/schemas/Report" }
         total: { type: integer, format: int32 }
 
-    CreateMessageRequest:
-      type: object
-      required: [text]
-      properties:
-        text: { type: string }
-
-    Message:
-      type: object
-      properties:
-        id: { type: string }
-        report_id: { type: string }
-        sender_id: { type: string }
-        sender_role: { type: string }
-        text: { type: string }
-        created_at: { type: integer, format: int64 }
-
-    MessageListResponse:
-      type: object
-      properties:
-        items:
-          type: array
-          items: { $ref: "#/components/schemas/Message" }
-        total: { type: integer, format: int32 }
-
     ChangeStatusRequest:
       type: object
       required: [status]
@@ -670,6 +510,29 @@ components:
         status:
           type: string
           enum: [new, in_review, resolved, rejected]
+
+    CreateNoteRequest:
+      type: object
+      required: [text]
+      properties:
+        text: { type: string }
+
+    InternalNote:
+      type: object
+      properties:
+        id: { type: string }
+        report_id: { type: string }
+        author_moderator_id: { type: string }
+        text: { type: string }
+        created_at: { type: integer, format: int64 }
+
+    NoteListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/InternalNote" }
+        total: { type: integer, format: int32 }
 
     Attachment:
       type: object
@@ -689,4 +552,3 @@ components:
         items:
           type: array
           items: { $ref: "#/components/schemas/Attachment" }
-
