@@ -112,6 +112,7 @@ func modMeHandler(deps Deps) http.HandlerFunc {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"id":         profile.ID,
+			"name":       profile.Name,
 			"email":      profile.Email,
 			"role":       profile.Role,
 			"created_at": profile.CreatedAt,

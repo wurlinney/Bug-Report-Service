@@ -21,7 +21,7 @@ func NewModeratorRepository(db *pgxpool.Pool) *ModeratorRepository {
 
 func (r *ModeratorRepository) GetByEmail(ctx context.Context, email string) (ports.UserRecord, bool, error) {
 	const q = `
-SELECT id, email, password_hash, role, created_at, updated_at
+SELECT id, name, email, password_hash, role, created_at, updated_at
 FROM moderators
 WHERE email = $1
 `
@@ -30,7 +30,7 @@ WHERE email = $1
 
 func (r *ModeratorRepository) GetByID(ctx context.Context, id string) (ports.UserRecord, bool, error) {
 	const q = `
-SELECT id, email, password_hash, role, created_at, updated_at
+SELECT id, name, email, password_hash, role, created_at, updated_at
 FROM moderators
 WHERE id = $1
 `
@@ -41,6 +41,7 @@ func (r *ModeratorRepository) getOne(ctx context.Context, query string, arg stri
 	var u ports.UserRecord
 	err := r.db.QueryRow(ctx, query, arg).Scan(
 		&u.ID,
+		&u.Name,
 		&u.Email,
 		&u.PasswordHash,
 		&u.Role,
@@ -58,10 +59,10 @@ func (r *ModeratorRepository) getOne(ctx context.Context, query string, arg stri
 
 func (r *ModeratorRepository) Create(ctx context.Context, u ports.UserRecord) error {
 	const q = `
-INSERT INTO moderators (id, email, password_hash, role, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO moderators (id, name, email, password_hash, role, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 `
-	_, err := r.db.Exec(ctx, q, u.ID, u.Email, u.PasswordHash, u.Role, u.CreatedAt, u.UpdatedAt)
+	_, err := r.db.Exec(ctx, q, u.ID, u.Name, u.Email, u.PasswordHash, u.Role, u.CreatedAt, u.UpdatedAt)
 	if err == nil {
 		return nil
 	}

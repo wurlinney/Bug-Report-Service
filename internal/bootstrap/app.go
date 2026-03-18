@@ -15,10 +15,12 @@ import (
 	s3adapter "bug-report-service/internal/adapters/storage/s3"
 	"bug-report-service/internal/application/attachment"
 	"bug-report-service/internal/application/auth"
-	"bug-report-service/internal/application/message"
+	"bug-report-service/internal/application/moderator"
+	"bug-report-service/internal/application/note"
+	"bug-report-service/internal/application/ports"
 	"bug-report-service/internal/application/report"
-	"bug-report-service/internal/application/user"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/jackc/pgx/v5/pgxpool"
 	tushandler "github.com/tus/tusd/v2/pkg/handler"
@@ -61,20 +63,18 @@ func NewApp() (*App, error) {
 		db = pool
 		ready.SetDependency("db", true)
 
-		usersRepo := postgres.NewUserRepository(db)
+		usersRepo := postgres.NewModeratorRepository(db)
 		rtRepo := postgres.NewRefreshTokenRepository(db)
 		reportsRepo := postgres.NewReportRepository(db)
 		attsRepo := postgres.NewAttachmentRepository(db)
-		msgRepo := postgres.NewMessageRepository(db)
-
-		hasher := security.NewBCryptPasswordHasher(12)
+		notesRepo := postgres.NewNoteRepository(db)
 		jwtMgr := security.NewJWTManager(security.JWTConfig{
 			Issuer:        cfg.JWT.Issuer,
 			AccessTTL:     cfg.JWT.AccessTTL,
 			RefreshTTL:    cfg.JWT.RefreshTTL,
 			HMACSecretKey: []byte(cfg.JWT.Secret),
 		})
-
+		hasher := security.NewBCryptPasswordHasher(12)
 		authSvc := auth.NewService(auth.Deps{
 			Users:         usersRepo,
 			RefreshTokens: rtRepo,
@@ -84,18 +84,18 @@ func NewApp() (*App, error) {
 			Clock:         security.RealClock{},
 			RefreshTTL:    cfg.JWT.RefreshTTL,
 		})
-
-		userSvc := user.NewService(usersRepo)
-		reportSvc := report.NewService(report.Deps{
+		modSvc := moderator.NewService(usersRepo)
+		noteSvc := note.NewService(note.Deps{
+			Notes:   notesRepo,
 			Reports: reportsRepo,
 			Clock:   security.RealClock{},
 			Random:  security.NewTokenGenerator(),
 		})
-		msgSvc := message.NewService(message.Deps{
-			Reports:  reportsRepo,
-			Messages: msgRepo,
-			Clock:    security.RealClock{},
-			Random:   security.NewTokenGenerator(),
+
+		reportSvc := report.NewService(report.Deps{
+			Reports: reportsRepo,
+			Clock:   security.RealClock{},
+			Random:  security.NewTokenGenerator(),
 		})
 		const uploadMaxSize = 20 * 1024 * 1024
 		allowedMIMEs := map[string]struct{}{"image/png": {}, "image/jpeg": {}, "image/webp": {}}
@@ -110,12 +110,14 @@ func NewApp() (*App, error) {
 			AllowedMIMEs: allowedMIMEs,
 		})
 
-		apiDeps.AuthService = authSvc
-		apiDeps.UserService = userSvc
+		apiDeps.ModAuthService = authSvc
+		apiDeps.ModeratorService = modSvc
+		apiDeps.NoteService = noteSvc
 		apiDeps.ReportService = reportSvc
-		apiDeps.MessageService = msgSvc
 		apiDeps.AttachmentService = attSvc
 		apiDeps.TokenVerifier = security.TokenVerifier{JWT: jwtMgr}
+		apiDeps.PublicCreateRPS = cfg.RateLimit.RPS
+		apiDeps.PublicCreateBurst = cfg.RateLimit.Burst
 
 		s3c, err := s3adapter.NewClient(context.Background(), cfg)
 		if err != nil {
@@ -125,6 +127,17 @@ func NewApp() (*App, error) {
 		ready.SetDependency("s3", true)
 
 		apiDeps.AttachmentSigner = s3adapter.NewPresigner(cfg.S3.Bucket, s3c)
+		if cfg.TusCleanup.Enabled {
+			startTusOrphanCleanup(
+				logger,
+				s3c,
+				cfg.S3.Bucket,
+				attsRepo,
+				cfg.TusCleanup.ObjectPrefix,
+				cfg.TusCleanup.GracePeriod,
+				cfg.TusCleanup.Interval,
+			)
+		}
 
 		store := s3store.New(cfg.S3.Bucket, s3c)
 		store.ObjectPrefix = "tus"
@@ -149,15 +162,7 @@ func NewApp() (*App, error) {
 						logger.Error("tus finalize: missing report_id in metadata", "upload_id", ev.Upload.ID)
 						continue
 					}
-					uploaderID := strings.TrimSpace(meta["uploader_id"])
-					uploaderRole := strings.TrimSpace(meta["uploader_role"])
-					if uploaderID == "" || uploaderRole == "" {
-						logger.Error("tus finalize: missing uploader info in metadata", "upload_id", ev.Upload.ID)
-						continue
-					}
 					_, fErr := attSvc.Finalize(context.Background(), attachment.FinalizeRequest{
-						ActorRole:      uploaderRole,
-						ActorID:        uploaderID,
 						ReportID:       reportID,
 						UploadID:       ev.Upload.ID,
 						FileName:       meta["filename"],
@@ -243,4 +248,88 @@ func (a *App) Run(ctx context.Context) error {
 
 	a.logger.Info("shutdown complete")
 	return nil
+}
+
+func startTusOrphanCleanup(
+	logger observability.Logger,
+	s3c *s3.Client,
+	bucket string,
+	attachments ports.AttachmentRepository,
+	prefix string,
+	gracePeriod time.Duration,
+	interval time.Duration,
+) {
+	run := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		cleanupTusOrphans(ctx, logger, s3c, bucket, attachments, prefix, gracePeriod)
+	}
+
+	go func() {
+		// Startup pass to clean up leftovers after crashes/restarts.
+		run()
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for range t.C {
+			run()
+		}
+	}()
+}
+
+func cleanupTusOrphans(
+	ctx context.Context,
+	logger observability.Logger,
+	s3c *s3.Client,
+	bucket string,
+	attachments ports.AttachmentRepository,
+	prefix string,
+	gracePeriod time.Duration,
+) {
+	cutoff := time.Now().Add(-gracePeriod)
+	pager := s3.NewListObjectsV2Paginator(s3c, &s3.ListObjectsV2Input{
+		Bucket: aws.String(bucket),
+		Prefix: aws.String(prefix),
+	})
+
+	var deleted int
+	for pager.HasMorePages() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			logger.Error("tus cleanup: list objects failed", "error", err.Error())
+			return
+		}
+
+		for _, obj := range page.Contents {
+			if obj.Key == nil || obj.LastModified == nil {
+				continue
+			}
+			if obj.LastModified.After(cutoff) {
+				continue
+			}
+
+			key := *obj.Key
+			found, err := attachments.ExistsByStorageKey(ctx, key)
+			if err != nil {
+				logger.Error("tus cleanup: db check failed", "key", key, "error", err.Error())
+				continue
+			}
+			if found {
+				continue
+			}
+
+			_, err = s3c.DeleteObject(ctx, &s3.DeleteObjectInput{
+				Bucket: aws.String(bucket),
+				Key:    aws.String(key),
+			})
+			if err != nil {
+				logger.Error("tus cleanup: delete object failed", "key", key, "error", err.Error())
+				continue
+			}
+			deleted++
+		}
+	}
+
+	if deleted > 0 {
+		logger.Info("tus cleanup: orphan objects deleted", "count", deleted)
+	}
 }
