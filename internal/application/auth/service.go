@@ -15,7 +15,6 @@ import (
 
 var (
 	ErrInvalidCredentials  = errors.New("invalid credentials")
-	ErrEmailAlreadyExists  = errors.New("email already exists")
 	ErrInvalidRefreshToken = errors.New("invalid refresh token")
 )
 
@@ -36,45 +35,6 @@ type Service struct {
 
 func NewService(deps Deps) *Service {
 	return &Service{deps: deps}
-}
-
-func (s *Service) Register(ctx context.Context, req RegisterRequest) (AuthResponse, error) {
-	email := normalizeEmail(req.Email)
-	name := strings.TrimSpace(req.Name)
-	if email == "" || name == "" || req.Password == "" {
-		return AuthResponse{}, ErrInvalidCredentials
-	}
-
-	if _, found, err := s.deps.Users.GetByEmail(ctx, email); err != nil {
-		return AuthResponse{}, err
-	} else if found {
-		return AuthResponse{}, ErrEmailAlreadyExists
-	}
-
-	now := s.deps.Clock.Now()
-	uid := s.deps.Random.NewID()
-	hash, err := s.deps.Hasher.HashPassword(req.Password)
-	if err != nil {
-		return AuthResponse{}, err
-	}
-
-	u := ports.UserRecord{
-		ID:           uid,
-		Email:        email,
-		Name:         name,
-		PasswordHash: hash,
-		Role:         "user",
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}
-	if err := s.deps.Users.Create(ctx, u); err != nil {
-		if errors.Is(err, ports.ErrUniqueViolation) {
-			return AuthResponse{}, ErrEmailAlreadyExists
-		}
-		return AuthResponse{}, err
-	}
-
-	return s.issueTokens(ctx, u.ID, u.Role)
 }
 
 func (s *Service) Login(ctx context.Context, req LoginRequest) (AuthResponse, error) {
