@@ -16,11 +16,6 @@ func TusCreateGuard(deps Deps) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			p, ok := PrincipalFromContext(r.Context())
-			if !ok {
-				writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid token")
-				return
-			}
 			if deps.ReportService == nil {
 				writeError(w, http.StatusInternalServerError, "misconfigured", "service misconfigured")
 				return
@@ -33,12 +28,14 @@ func TusCreateGuard(deps Deps) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Access check: user can only upload to own report; moderator can upload to any.
-			if p.Role != "moderator" {
-				if _, err := deps.ReportService.GetForUser(r.Context(), p.UserID, reportID); err != nil {
-					writeError(w, http.StatusForbidden, "forbidden", "forbidden")
-					return
-				}
+			ok, err := deps.ReportService.Exists(r.Context(), reportID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "internal_error", "internal error")
+				return
+			}
+			if !ok {
+				writeError(w, http.StatusNotFound, "not_found", "not found")
+				return
 			}
 
 			next.ServeHTTP(w, r)

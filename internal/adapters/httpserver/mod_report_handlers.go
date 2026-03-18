@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -18,13 +19,11 @@ type changeStatusReq struct {
 
 func listAllReportsHandler(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		p, ok := PrincipalFromContext(r.Context())
-		if !ok {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid token")
-			return
-		}
-		if deps.ReportService == nil {
-			writeError(w, http.StatusInternalServerError, "misconfigured", "service misconfigured")
+		p, ok := requirePrincipal(w, r)
+		if !ok || deps.ReportService == nil {
+			if ok {
+				writeError(w, http.StatusInternalServerError, "misconfigured", "service misconfigured")
+			}
 			return
 		}
 
@@ -42,59 +41,40 @@ func listAllReportsHandler(deps Deps) http.HandlerFunc {
 		if s := strings.TrimSpace(qp.Get("q")); s != "" {
 			queryPtr = &s
 		}
-		var userIDPtr *string
-		if s := strings.TrimSpace(qp.Get("user_id")); s != "" {
-			userIDPtr = &s
+		var reporterNamePtr *string
+		if s := strings.TrimSpace(qp.Get("reporter_name")); s != "" {
+			reporterNamePtr = &s
 		}
 
 		from := parseUnixSeconds(qp.Get("created_from"))
 		to := parseUnixSeconds(qp.Get("created_to"))
 
 		items, total, err := deps.ReportService.ListAll(r.Context(), report.ListAllRequest{
-			ActorRole: p.Role,
-			Status:    statusPtr,
-			UserID:    userIDPtr,
-			Query:     queryPtr,
-			CreatedFrom: func() *time.Time {
-				if from.IsZero() {
-					return nil
-				}
-				return &from
-			}(),
-			CreatedTo: func() *time.Time {
-				if to.IsZero() {
-					return nil
-				}
-				return &to
-			}(),
-			SortBy:   sortBy,
-			SortDesc: sortDesc,
-			Limit:    limit,
-			Offset:   offset,
+			ActorRole:    p.Role,
+			Status:       statusPtr,
+			ReporterName: reporterNamePtr,
+			Query:        queryPtr,
+			CreatedFrom:  timePtr(from),
+			CreatedTo:    timePtr(to),
+			SortBy:       sortBy,
+			SortDesc:     sortDesc,
+			Limit:        limit,
+			Offset:       offset,
 		})
 		if err != nil {
-			switch err {
-			case report.ErrForbidden:
-				writeError(w, http.StatusForbidden, "forbidden", "forbidden")
-			case report.ErrBadInput:
-				writeError(w, http.StatusBadRequest, "validation_error", "invalid parameters")
-			default:
-				writeError(w, http.StatusInternalServerError, "internal_error", "internal error")
-			}
+			writeReportServiceError(w, err)
 			return
 		}
 
 		out := make([]map[string]any, 0, len(items))
 		for _, it := range items {
 			out = append(out, map[string]any{
-				"id":          it.ID,
-				"user_id":     it.UserID,
-				"user_name":   it.UserName,
-				"title":       it.Title,
-				"description": it.Description,
-				"status":      it.Status,
-				"created_at":  it.CreatedAt.Unix(),
-				"updated_at":  it.UpdatedAt.Unix(),
+				"id":            it.ID,
+				"reporter_name": it.ReporterName,
+				"description":   it.Description,
+				"status":        it.Status,
+				"created_at":    it.CreatedAt.Unix(),
+				"updated_at":    it.UpdatedAt.Unix(),
 			})
 		}
 
@@ -107,13 +87,11 @@ func listAllReportsHandler(deps Deps) http.HandlerFunc {
 
 func getReportHandler(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		p, ok := PrincipalFromContext(r.Context())
-		if !ok {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid token")
-			return
-		}
-		if deps.ReportService == nil {
-			writeError(w, http.StatusInternalServerError, "misconfigured", "service misconfigured")
+		p, ok := requirePrincipal(w, r)
+		if !ok || deps.ReportService == nil {
+			if ok {
+				writeError(w, http.StatusInternalServerError, "misconfigured", "service misconfigured")
+			}
 			return
 		}
 
@@ -125,39 +103,28 @@ func getReportHandler(deps Deps) http.HandlerFunc {
 
 		got, err := deps.ReportService.GetForActor(r.Context(), p.Role, p.UserID, id)
 		if err != nil {
-			switch err {
-			case report.ErrNotFound:
-				writeError(w, http.StatusNotFound, "not_found", "not found")
-			case report.ErrForbidden:
-				writeError(w, http.StatusForbidden, "forbidden", "forbidden")
-			default:
-				writeError(w, http.StatusInternalServerError, "internal_error", "internal error")
-			}
+			writeReportServiceError(w, err)
 			return
 		}
 
 		writeJSON(w, http.StatusOK, map[string]any{
-			"id":          got.ID,
-			"user_id":     got.UserID,
-			"user_name":   got.UserName,
-			"title":       got.Title,
-			"description": got.Description,
-			"status":      got.Status,
-			"created_at":  got.CreatedAt.Unix(),
-			"updated_at":  got.UpdatedAt.Unix(),
+			"id":            got.ID,
+			"reporter_name": got.ReporterName,
+			"description":   got.Description,
+			"status":        got.Status,
+			"created_at":    got.CreatedAt.Unix(),
+			"updated_at":    got.UpdatedAt.Unix(),
 		})
 	}
 }
 
 func changeReportStatusHandler(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		p, ok := PrincipalFromContext(r.Context())
-		if !ok {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid token")
-			return
-		}
-		if deps.ReportService == nil {
-			writeError(w, http.StatusInternalServerError, "misconfigured", "service misconfigured")
+		p, ok := requirePrincipal(w, r)
+		if !ok || deps.ReportService == nil {
+			if ok {
+				writeError(w, http.StatusInternalServerError, "misconfigured", "service misconfigured")
+			}
 			return
 		}
 
@@ -179,16 +146,7 @@ func changeReportStatusHandler(deps Deps) http.HandlerFunc {
 			ReportID:  id,
 			Status:    req.Status,
 		}); err != nil {
-			switch err {
-			case report.ErrBadInput:
-				writeError(w, http.StatusBadRequest, "validation_error", "invalid parameters")
-			case report.ErrForbidden:
-				writeError(w, http.StatusForbidden, "forbidden", "forbidden")
-			case report.ErrNotFound:
-				writeError(w, http.StatusNotFound, "not_found", "not found")
-			default:
-				writeError(w, http.StatusInternalServerError, "internal_error", "internal error")
-			}
+			writeReportServiceError(w, err)
 			return
 		}
 
@@ -206,4 +164,24 @@ func parseUnixSeconds(s string) time.Time {
 		return time.Time{}
 	}
 	return time.Unix(n, 0).UTC()
+}
+
+func timePtr(v time.Time) *time.Time {
+	if v.IsZero() {
+		return nil
+	}
+	return &v
+}
+
+func writeReportServiceError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, report.ErrBadInput):
+		writeError(w, http.StatusBadRequest, "validation_error", "invalid parameters")
+	case errors.Is(err, report.ErrNotFound):
+		writeError(w, http.StatusNotFound, "not_found", "not found")
+	case errors.Is(err, report.ErrForbidden):
+		writeError(w, http.StatusForbidden, "forbidden", "forbidden")
+	default:
+		writeError(w, http.StatusInternalServerError, "internal_error", "internal error")
+	}
 }
