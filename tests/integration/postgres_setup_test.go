@@ -49,11 +49,11 @@ func ensureSchema(t *testing.T, db *pgxpool.Pool) {
 	defer cancel()
 
 	// Clean between tests (idempotent).
+	_, _ = db.Exec(ctx, `TRUNCATE TABLE internal_notes;`)
 	_, _ = db.Exec(ctx, `TRUNCATE TABLE attachments;`)
-	_, _ = db.Exec(ctx, `TRUNCATE TABLE messages;`)
 	_, _ = db.Exec(ctx, `TRUNCATE TABLE bug_reports;`)
 	_, _ = db.Exec(ctx, `TRUNCATE TABLE refresh_tokens;`)
-	_, _ = db.Exec(ctx, `TRUNCATE TABLE users;`)
+	_, _ = db.Exec(ctx, `TRUNCATE TABLE moderators;`)
 }
 
 func applyMigrations(t *testing.T, db *pgxpool.Pool) {
