@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -29,12 +30,12 @@ func listReportAttachmentsHandler(deps Deps) http.HandlerFunc {
 			ReportID:  reportID,
 		})
 		if err != nil {
-			switch err {
-			case attachment.ErrBadInput:
+			switch {
+			case errors.Is(err, attachment.ErrBadInput):
 				writeError(w, http.StatusBadRequest, "validation_error", "invalid parameters")
-			case attachment.ErrNotFound:
+			case errors.Is(err, attachment.ErrNotFound):
 				writeError(w, http.StatusNotFound, "not_found", "not found")
-			case attachment.ErrForbidden:
+			case errors.Is(err, attachment.ErrForbidden):
 				writeError(w, http.StatusForbidden, "forbidden", "forbidden")
 			default:
 				writeError(w, http.StatusInternalServerError, "internal_error", "internal error")

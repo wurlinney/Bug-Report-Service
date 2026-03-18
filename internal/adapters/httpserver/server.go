@@ -10,11 +10,6 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func NewServer(cfg config.Config, log observability.Logger, ready Readiness) *http.Server {
-	base := NewRouter(ready)
-	return NewServerWithHandler(cfg, log, base)
-}
-
 func NewServerWithHandler(cfg config.Config, log observability.Logger, h http.Handler) *http.Server {
 
 	r := chi.NewRouter()
