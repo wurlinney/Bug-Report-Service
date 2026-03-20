@@ -42,7 +42,11 @@ func modLoginHandler(deps Deps) http.HandlerFunc {
 			Password: req.Password,
 		})
 		if err != nil {
-			writeError(w, http.StatusUnauthorized, "invalid_credentials", "invalid credentials")
+			if errors.Is(err, auth.ErrInvalidCredentials) {
+				writeError(w, http.StatusUnauthorized, "invalid_credentials", "invalid credentials")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error", "internal error")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -74,7 +78,11 @@ func modRefreshHandler(deps Deps) http.HandlerFunc {
 			RefreshToken:   req.RefreshToken,
 		})
 		if err != nil {
-			writeError(w, http.StatusUnauthorized, "invalid_refresh", "invalid refresh token")
+			if errors.Is(err, auth.ErrInvalidRefreshToken) {
+				writeError(w, http.StatusUnauthorized, "invalid_refresh", "invalid refresh token")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error", "internal error")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -114,7 +122,6 @@ func modMeHandler(deps Deps) http.HandlerFunc {
 			"id":         profile.ID,
 			"name":       profile.Name,
 			"email":      profile.Email,
-			"role":       profile.Role,
 			"created_at": profile.CreatedAt,
 			"updated_at": profile.UpdatedAt,
 		})

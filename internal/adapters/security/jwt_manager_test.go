@@ -14,7 +14,7 @@ func TestJWTManager_IssueAndVerifyAccessToken(t *testing.T) {
 		Now:           func() time.Time { return time.Unix(1_700_000_000, 0).UTC() },
 	})
 
-	access, err := m.IssueAccessToken("u1", "user")
+	access, err := m.IssueAccessToken("u1")
 	if err != nil {
 		t.Fatalf("IssueAccessToken error: %v", err)
 	}
@@ -29,8 +29,8 @@ func TestJWTManager_IssueAndVerifyAccessToken(t *testing.T) {
 	if claims.Subject != "u1" {
 		t.Fatalf("expected sub=u1, got %q", claims.Subject)
 	}
-	if claims.Role != "user" {
-		t.Fatalf("expected role=user, got %q", claims.Role)
+	if claims.Role != "moderator" {
+		t.Fatalf("expected role=moderator, got %q", claims.Role)
 	}
 	if claims.Issuer != "bug-report-service" {
 		t.Fatalf("expected issuer, got %q", claims.Issuer)
@@ -50,7 +50,7 @@ func TestJWTManager_ExpiredTokenRejected(t *testing.T) {
 		Now:           func() time.Time { return now },
 	})
 
-	access, err := m.IssueAccessToken("u1", "user")
+	access, err := m.IssueAccessToken("u1")
 	if err != nil {
 		t.Fatalf("IssueAccessToken error: %v", err)
 	}
