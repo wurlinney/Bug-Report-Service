@@ -13,6 +13,7 @@ import (
 	"bug-report-service/internal/application/note"
 	"bug-report-service/internal/application/ports"
 	"bug-report-service/internal/application/report"
+	"bug-report-service/internal/application/uploadsession"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -29,15 +30,16 @@ type TokenVerifier interface {
 type Deps struct {
 	Ready Readiness
 
-	ModAuthService    *auth.Service
-	ModeratorService  *moderator.Service
-	NoteService       *note.Service
-	ReportService     *report.Service
-	AttachmentService *attachment.Service
-	AttachmentSigner  ports.ObjectURLSigner
-	TokenVerifier     TokenVerifier
-	PublicCreateRPS   float64
-	PublicCreateBurst int
+	ModAuthService       *auth.Service
+	ModeratorService     *moderator.Service
+	NoteService          *note.Service
+	ReportService        *report.Service
+	UploadSessionService *uploadsession.Service
+	AttachmentService    *attachment.Service
+	AttachmentSigner     ports.ObjectURLSigner
+	TokenVerifier        TokenVerifier
+	PublicCreateRPS      float64
+	PublicCreateBurst    int
 
 	TusUploads http.Handler
 }
@@ -62,6 +64,8 @@ func NewAPI(deps Deps) http.Handler {
 	// v1 API
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Route("/public", func(r chi.Router) {
+			r.Post("/upload-sessions", createUploadSessionHandler(deps))
+			r.Delete("/upload-sessions/{id}/uploads/{uploadId}", deleteUploadFromSessionHandler(deps))
 			r.With(middleware.RateLimit(deps.PublicCreateRPS, deps.PublicCreateBurst)).Post("/reports", createPublicReportHandler(deps))
 		})
 
@@ -86,6 +90,7 @@ func NewAPI(deps Deps) http.Handler {
 			r.Get("/reports", listAllReportsHandler(deps))
 			r.Get("/reports/{id}", getReportHandler(deps))
 			r.Patch("/reports/{id}/status", changeReportStatusHandler(deps))
+			r.Patch("/reports/{id}/meta", changeReportMetaHandler(deps))
 			r.Get("/reports/{id}/notes", listReportNotesHandler(deps))
 			r.Post("/reports/{id}/notes", createReportNoteHandler(deps))
 			r.Get("/reports/{id}/attachments", listReportAttachmentsHandler(deps))

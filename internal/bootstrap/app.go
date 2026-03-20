@@ -19,6 +19,7 @@ import (
 	"bug-report-service/internal/application/note"
 	"bug-report-service/internal/application/ports"
 	"bug-report-service/internal/application/report"
+	"bug-report-service/internal/application/uploadsession"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -66,6 +67,7 @@ func NewApp() (*App, error) {
 		usersRepo := postgres.NewModeratorRepository(db)
 		rtRepo := postgres.NewRefreshTokenRepository(db)
 		reportsRepo := postgres.NewReportRepository(db)
+		uploadSessionsRepo := postgres.NewUploadSessionRepository(db)
 		attsRepo := postgres.NewAttachmentRepository(db)
 		notesRepo := postgres.NewNoteRepository(db)
 		jwtMgr := security.NewJWTManager(security.JWTConfig{
@@ -75,6 +77,7 @@ func NewApp() (*App, error) {
 			HMACSecretKey: []byte(cfg.JWT.Secret),
 		})
 		hasher := security.NewBCryptPasswordHasher(12)
+		seedModerators(context.Background(), logger, usersRepo, hasher, cfg.ModeratorSeed)
 		authSvc := auth.NewService(auth.Deps{
 			Users:         usersRepo,
 			RefreshTokens: rtRepo,
@@ -88,20 +91,27 @@ func NewApp() (*App, error) {
 		noteSvc := note.NewService(note.Deps{
 			Notes:   notesRepo,
 			Reports: reportsRepo,
-			Clock:   security.RealClock{},
-			Random:  security.NewTokenGenerator(),
 		})
 
 		reportSvc := report.NewService(report.Deps{
-			Reports: reportsRepo,
-			Clock:   security.RealClock{},
-			Random:  security.NewTokenGenerator(),
+			Reports:     reportsRepo,
+			Sessions:    uploadSessionsRepo,
+			Attachments: attsRepo,
 		})
+		uploadSessionSvc := uploadsession.NewService(uploadSessionsRepo)
 		const uploadMaxSize = 20 * 1024 * 1024
-		allowedMIMEs := map[string]struct{}{"image/png": {}, "image/jpeg": {}, "image/webp": {}}
+		allowedMIMEs := map[string]struct{}{
+			"image/png":         {},
+			"image/jpeg":        {},
+			"image/jpg":         {},
+			"image/webp":        {},
+			"application/pdf":   {},
+			"application/x-pdf": {},
+		}
 
 		attSvc := attachment.NewService(attachment.Deps{
 			Reports:      reportsRepo,
+			Sessions:     uploadSessionsRepo,
 			Attachments:  attsRepo,
 			Storage:      nil,
 			Clock:        security.RealClock{},
@@ -114,6 +124,7 @@ func NewApp() (*App, error) {
 		apiDeps.ModeratorService = modSvc
 		apiDeps.NoteService = noteSvc
 		apiDeps.ReportService = reportSvc
+		apiDeps.UploadSessionService = uploadSessionSvc
 		apiDeps.AttachmentService = attSvc
 		apiDeps.TokenVerifier = security.TokenVerifier{JWT: jwtMgr}
 		apiDeps.PublicCreateRPS = cfg.RateLimit.RPS
@@ -126,7 +137,16 @@ func NewApp() (*App, error) {
 		}
 		ready.SetDependency("s3", true)
 
-		apiDeps.AttachmentSigner = s3adapter.NewPresigner(cfg.S3.Bucket, s3c)
+		presignClient := s3c
+		if strings.TrimSpace(cfg.S3.PublicEndpoint) != "" && strings.TrimSpace(cfg.S3.PublicEndpoint) != strings.TrimSpace(cfg.S3.Endpoint) {
+			publicS3c, err := s3adapter.NewPublicClient(context.Background(), cfg)
+			if err != nil {
+				ready.SetDependency("s3", false)
+				return nil, err
+			}
+			presignClient = publicS3c
+		}
+		apiDeps.AttachmentSigner = s3adapter.NewPresigner(cfg.S3.Bucket, presignClient)
 		if cfg.TusCleanup.Enabled {
 			startTusOrphanCleanup(
 				logger,
@@ -157,24 +177,28 @@ func NewApp() (*App, error) {
 			go func() {
 				for ev := range tus.CompleteUploads {
 					meta := ev.Upload.MetaData
-					reportID := strings.TrimSpace(meta["report_id"])
-					if reportID == "" {
-						logger.Error("tus finalize: missing report_id in metadata", "upload_id", ev.Upload.ID)
+					uploadSessionID := strings.TrimSpace(meta["upload_session_id"])
+					if uploadSessionID == "" {
+						logger.Error("tus finalize: missing upload_session_id in metadata", "upload_id", ev.Upload.ID)
 						continue
 					}
+					storageKey := strings.TrimSpace(ev.Upload.Storage["Key"])
+					if storageKey == "" {
+						storageKey = "tus/" + ev.Upload.ID
+					}
 					_, fErr := attSvc.Finalize(context.Background(), attachment.FinalizeRequest{
-						ReportID:       reportID,
-						UploadID:       ev.Upload.ID,
-						FileName:       meta["filename"],
-						ContentType:    meta["content_type"],
-						FileSize:       ev.Upload.Size,
-						StorageKey:     "tus/" + ev.Upload.ID,
-						IdempotencyKey: meta["idempotency_key"],
+						UploadSessionID: uploadSessionID,
+						UploadID:        ev.Upload.ID,
+						FileName:        meta["filename"],
+						ContentType:     meta["content_type"],
+						FileSize:        ev.Upload.Size,
+						StorageKey:      storageKey,
+						IdempotencyKey:  meta["idempotency_key"],
 					})
 					if fErr != nil {
 						logger.Error("tus finalize: failed to persist attachment",
 							"upload_id", ev.Upload.ID,
-							"report_id", reportID,
+							"upload_session_id", uploadSessionID,
 							"error", fErr.Error(),
 						)
 						// Best-effort cleanup to avoid leaving untracked objects in S3.
