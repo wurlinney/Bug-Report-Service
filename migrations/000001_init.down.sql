@@ -6,6 +6,7 @@ DROP TRIGGER IF EXISTS set_moderators_updated_at ON moderators;
 DROP TABLE IF EXISTS refresh_tokens;
 DROP TABLE IF EXISTS internal_notes;
 DROP TABLE IF EXISTS attachments;
+DROP TABLE IF EXISTS upload_sessions;
 DROP TABLE IF EXISTS bug_reports;
 DROP TABLE IF EXISTS moderators;
 
