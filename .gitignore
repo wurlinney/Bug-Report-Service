@@ -1,0 +1,30 @@
+# OS / Editor
+.DS_Store
+Thumbs.db
+desktop.ini
+
+.idea/
+.vscode/
+
+# Go build artifacts
+bin/
+dist/
+tmp/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Logs
+*.log
+
+# Local env / secrets
+.env
+configs/config.env
+
+# Optional: compose volumes if mapped locally later
+.data/
+

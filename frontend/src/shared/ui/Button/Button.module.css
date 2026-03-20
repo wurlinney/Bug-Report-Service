@@ -1,0 +1,29 @@
+.button {
+  border-radius: var(--radius-12);
+  border: 1px solid var(--color-border);
+  background: #ffffff;
+  color: var(--color-text);
+  min-height: 52px;
+  padding: 14px 22px;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+}
+
+.buttonPrimary {
+  border-color: rgba(239, 68, 68, 0.5);
+  background: #ef4444;
+  color: #ffffff;
+}
+
+.button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
