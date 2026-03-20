@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -43,11 +44,12 @@ type Config struct {
 	}
 
 	S3 struct {
-		Endpoint  string
-		Region    string
-		Bucket    string
-		AccessKey string
-		SecretKey string
+		Endpoint       string
+		PublicEndpoint string
+		Region         string
+		Bucket         string
+		AccessKey      string
+		SecretKey      string
 	}
 
 	TusCleanup struct {
@@ -56,6 +58,15 @@ type Config struct {
 		GracePeriod  time.Duration
 		Interval     time.Duration
 	}
+
+	ModeratorSeed []ModeratorSeed
+}
+
+type ModeratorSeed struct {
+	Email        string
+	Name         string
+	Password     string
+	PasswordHash string
 }
 
 func Load() (Config, error) {
@@ -83,6 +94,8 @@ func Load() (Config, error) {
 	c.JWT.RefreshTTL = getDuration("JWT_REFRESH_TTL", 30*24*time.Hour)
 
 	c.S3.Endpoint = getString("S3_ENDPOINT", "http://minio:9000")
+	publicEP := strings.TrimSpace(os.Getenv("S3_PUBLIC_ENDPOINT"))
+	c.S3.PublicEndpoint = getString("S3_PUBLIC_ENDPOINT", c.S3.Endpoint)
 	c.S3.Region = getString("S3_REGION", "us-east-1")
 	c.S3.Bucket = getString("S3_BUCKET", "bug-attachments")
 	c.S3.AccessKey = getString("S3_ACCESS_KEY", "")
@@ -92,6 +105,8 @@ func Load() (Config, error) {
 	c.TusCleanup.ObjectPrefix = getString("TUS_CLEANUP_OBJECT_PREFIX", "tus/")
 	c.TusCleanup.GracePeriod = getDuration("TUS_CLEANUP_GRACE_PERIOD", 6*time.Hour)
 	c.TusCleanup.Interval = getDuration("TUS_CLEANUP_INTERVAL", 30*time.Minute)
+
+	c.ModeratorSeed = getModeratorSeed()
 
 	if c.HTTP.Addr == "" {
 		return Config{}, errors.New("HTTP_ADDR is empty")
@@ -118,6 +133,9 @@ func Load() (Config, error) {
 		if strings.TrimSpace(c.JWT.Secret) == "" {
 			return Config{}, errors.New("JWT_SECRET is empty")
 		}
+		if publicEP == "" {
+			return Config{}, errors.New("S3_PUBLIC_ENDPOINT is empty (required for non-local environments)")
+		}
 		if strings.TrimSpace(c.S3.Bucket) == "" {
 			return Config{}, errors.New("S3_BUCKET is empty")
 		}
@@ -127,6 +145,28 @@ func Load() (Config, error) {
 	}
 
 	return c, nil
+}
+
+func getModeratorSeed() []ModeratorSeed {
+	// Supports up to 5 predefined moderator accounts.
+	// Recommended for production is to provide PASSWORD_HASH via secrets.
+	var out []ModeratorSeed
+	for i := 1; i <= 5; i++ {
+		email := strings.ToLower(strings.TrimSpace(os.Getenv(fmt.Sprintf("MOD_SEED_%d_EMAIL", i))))
+		if email == "" {
+			continue
+		}
+		name := strings.TrimSpace(os.Getenv(fmt.Sprintf("MOD_SEED_%d_NAME", i)))
+		pass := strings.TrimSpace(os.Getenv(fmt.Sprintf("MOD_SEED_%d_PASSWORD", i)))
+		hash := strings.TrimSpace(os.Getenv(fmt.Sprintf("MOD_SEED_%d_PASSWORD_HASH", i)))
+		out = append(out, ModeratorSeed{
+			Email:        email,
+			Name:         name,
+			Password:     pass,
+			PasswordHash: hash,
+		})
+	}
+	return out
 }
 
 func getString(key, def string) string {
