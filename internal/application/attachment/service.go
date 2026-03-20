@@ -13,6 +13,7 @@ var reUnsafe = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
 
 type Deps struct {
 	Reports     ports.ReportRepository
+	Sessions    ports.UploadSessionRepository
 	Attachments ports.AttachmentRepository
 	Storage     ports.ObjectStorage
 	Clock       ports.Clock
@@ -28,6 +29,13 @@ type Service struct {
 
 func NewService(deps Deps) *Service {
 	return &Service{deps: deps}
+}
+
+func (s *Service) DeleteFromSessionByStorageKey(ctx context.Context, uploadSessionID string, storageKey string) (bool, error) {
+	if strings.TrimSpace(uploadSessionID) == "" || strings.TrimSpace(storageKey) == "" {
+		return false, ErrBadInput
+	}
+	return s.deps.Attachments.DeleteFromSessionByStorageKey(ctx, uploadSessionID, storageKey)
 }
 
 func (s *Service) Upload(ctx context.Context, req UploadRequest) (DTO, error) {
@@ -48,15 +56,13 @@ func (s *Service) Upload(ctx context.Context, req UploadRequest) (DTO, error) {
 		return DTO{}, err
 	}
 	// Idempotency (best-effort): return existing attachment for same report+key.
-	if existing, ok, err := s.getByIdempotencyKey(ctx, req.ReportID, req.IdempotencyKey); err != nil {
+	if existing, ok, err := s.getByIdempotencyKey(ctx, req.ReportID, "", req.IdempotencyKey); err != nil {
 		return DTO{}, err
 	} else if ok {
 		return toDTO(existing), nil
 	}
 
-	now := s.deps.Clock.Now()
-	id := s.deps.Random.NewID()
-	storageKey := buildStorageKey(req.ReportID, id, req.FileName)
+	storageKey := buildStorageKey(req.ReportID, s.deps.Random.NewID(), req.FileName)
 
 	// 1) upload bytes to storage
 	if err := s.deps.Storage.PutObject(ctx, storageKey, req.ContentType, req.Data); err != nil {
@@ -65,25 +71,24 @@ func (s *Service) Upload(ctx context.Context, req UploadRequest) (DTO, error) {
 
 	// 2) persist metadata
 	rec := ports.AttachmentRecord{
-		ID:             id,
 		ReportID:       req.ReportID,
 		FileName:       safeFileName(req.FileName),
 		ContentType:    req.ContentType,
 		FileSize:       int64(len(req.Data)),
 		StorageKey:     storageKey,
-		CreatedAt:      now,
 		IdempotencyKey: req.IdempotencyKey,
 	}
-	if err := s.deps.Attachments.Create(ctx, rec); err != nil {
+	created, err := s.deps.Attachments.Create(ctx, rec)
+	if err != nil {
 		_ = s.deps.Storage.DeleteObject(ctx, storageKey) // cleanup on DB failure
 		return DTO{}, err
 	}
 
-	return toDTO(rec), nil
+	return toDTO(created), nil
 }
 
 func (s *Service) Finalize(ctx context.Context, req FinalizeRequest) (DTO, error) {
-	if req.ReportID == "" {
+	if req.UploadSessionID == "" {
 		return DTO{}, ErrBadInput
 	}
 	if strings.TrimSpace(req.UploadID) == "" {
@@ -99,33 +104,28 @@ func (s *Service) Finalize(ctx context.Context, req FinalizeRequest) (DTO, error
 		return DTO{}, ErrBadInput
 	}
 
-	if err := s.ensureReportExists(ctx, req.ReportID); err != nil {
+	if err := s.ensureSessionExists(ctx, req.UploadSessionID); err != nil {
 		return DTO{}, err
 	}
-	if existing, ok, err := s.getByIdempotencyKey(ctx, req.ReportID, req.IdempotencyKey); err != nil {
+	if existing, ok, err := s.getByIdempotencyKey(ctx, "", req.UploadSessionID, req.IdempotencyKey); err != nil {
 		return DTO{}, err
 	} else if ok {
 		return toDTO(existing), nil
 	}
 
-	now := s.deps.Clock.Now()
-	// Use tus upload id as attachment id to make finalize idempotent across retries.
-	id := strings.TrimSpace(req.UploadID)
-
 	rec := ports.AttachmentRecord{
-		ID:             id,
-		ReportID:       req.ReportID,
-		FileName:       safeFileName(req.FileName),
-		ContentType:    req.ContentType,
-		FileSize:       req.FileSize,
-		StorageKey:     strings.TrimSpace(req.StorageKey),
-		CreatedAt:      now,
-		IdempotencyKey: req.IdempotencyKey,
+		UploadSessionID: req.UploadSessionID,
+		FileName:        safeFileName(req.FileName),
+		ContentType:     req.ContentType,
+		FileSize:        req.FileSize,
+		StorageKey:      strings.TrimSpace(req.StorageKey),
+		IdempotencyKey:  req.IdempotencyKey,
 	}
-	if err := s.deps.Attachments.Create(ctx, rec); err != nil {
+	created, err := s.deps.Attachments.Create(ctx, rec)
+	if err != nil {
 		return DTO{}, err
 	}
-	return toDTO(rec), nil
+	return toDTO(created), nil
 }
 
 func (s *Service) ListForReport(ctx context.Context, req ListForReportRequest) ([]DTO, error) {
@@ -178,11 +178,22 @@ func (s *Service) ensureReportExists(ctx context.Context, reportID string) error
 	return nil
 }
 
-func (s *Service) getByIdempotencyKey(ctx context.Context, reportID, idempotencyKey string) (ports.AttachmentRecord, bool, error) {
+func (s *Service) ensureSessionExists(ctx context.Context, uploadSessionID string) error {
+	_, found, err := s.deps.Sessions.GetByID(ctx, uploadSessionID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Service) getByIdempotencyKey(ctx context.Context, reportID, uploadSessionID, idempotencyKey string) (ports.AttachmentRecord, bool, error) {
 	if idempotencyKey == "" {
 		return ports.AttachmentRecord{}, false, nil
 	}
-	return s.deps.Attachments.GetByIdempotencyKey(ctx, reportID, idempotencyKey)
+	return s.deps.Attachments.GetByIdempotencyKey(ctx, reportID, uploadSessionID, idempotencyKey)
 }
 
 func buildStorageKey(reportID, attachmentID, fileName string) string {

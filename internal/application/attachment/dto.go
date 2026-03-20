@@ -15,7 +15,7 @@ type UploadRequest struct {
 // FinalizeRequest is used when the file bytes are uploaded externally (e.g. tusd),
 // and we only need to validate access and persist metadata in DB.
 type FinalizeRequest struct {
-	ReportID string
+	UploadSessionID string
 
 	UploadID       string
 	FileName       string
@@ -26,7 +26,7 @@ type FinalizeRequest struct {
 }
 
 type DTO struct {
-	ID          string
+	ID          int64
 	ReportID    string
 	FileName    string
 	ContentType string

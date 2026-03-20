@@ -11,8 +11,6 @@ import (
 type Deps struct {
 	Notes   ports.InternalNoteRepository
 	Reports ports.ReportRepository
-	Clock   ports.Clock
-	Random  ports.Random
 }
 
 type Service struct {
@@ -59,16 +57,15 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (NoteDTO, error
 	}
 
 	rec := ports.InternalNoteRecord{
-		ID:                s.deps.Random.NewID(),
 		ReportID:          strings.TrimSpace(req.ReportID),
 		AuthorModeratorID: strings.TrimSpace(req.ActorID),
 		Text:              strings.TrimSpace(req.Text),
-		CreatedAt:         s.deps.Clock.Now(),
 	}
-	if err := s.deps.Notes.Create(ctx, rec); err != nil {
+	created, err := s.deps.Notes.Create(ctx, rec)
+	if err != nil {
 		return NoteDTO{}, err
 	}
-	return toDTO(rec), nil
+	return toDTO(created), nil
 }
 
 func (s *Service) List(ctx context.Context, req ListRequest) ([]NoteDTO, int, error) {

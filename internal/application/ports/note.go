@@ -6,7 +6,7 @@ import (
 )
 
 type InternalNoteRepository interface {
-	Create(ctx context.Context, n InternalNoteRecord) error
+	Create(ctx context.Context, n InternalNoteRecord) (InternalNoteRecord, error)
 	ListByReport(ctx context.Context, reportID string, limit int, offset int) ([]InternalNoteRecord, int, error)
 }
 

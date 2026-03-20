@@ -11,9 +11,10 @@ import (
 var ErrNotFound = errors.New("not found")
 
 type ReportRepository interface {
-	Create(ctx context.Context, r ReportRecord) error
+	Create(ctx context.Context, r ReportRecord) (ReportRecord, error)
 	GetByID(ctx context.Context, id string) (r ReportRecord, found bool, err error)
-	UpdateStatus(ctx context.Context, id string, status string, updatedAt time.Time) error
+	UpdateStatus(ctx context.Context, id string, status string) error
+	UpdateMeta(ctx context.Context, id string, priority string, influence string) error
 	ListAll(ctx context.Context, f ReportListFilter) (items []ReportRecord, total int, err error)
 }
 
@@ -22,6 +23,8 @@ type ReportRecord struct {
 	ReporterName string
 	Description  string
 	Status       string
+	Influence    string
+	Priority     string
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }

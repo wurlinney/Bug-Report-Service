@@ -11,24 +11,45 @@ import (
 )
 
 type memAttachments struct {
-	byReportID map[string][]ports.AttachmentRecord
-	byIdemKey  map[string]ports.AttachmentRecord
-	failCreate bool
+	byReportID  map[string][]ports.AttachmentRecord
+	bySessionID map[string][]ports.AttachmentRecord
+	byIdemKey   map[string]ports.AttachmentRecord
+	failCreate  bool
 }
 
-func (m *memAttachments) Create(_ context.Context, a ports.AttachmentRecord) error {
+func (m *memAttachments) Create(_ context.Context, a ports.AttachmentRecord) (ports.AttachmentRecord, error) {
 	if m.failCreate {
-		return errors.New("db error")
+		return ports.AttachmentRecord{}, errors.New("db error")
+	}
+	if m.byIdemKey == nil {
+		m.byIdemKey = map[string]ports.AttachmentRecord{}
+	}
+	if m.byReportID == nil {
+		m.byReportID = map[string][]ports.AttachmentRecord{}
+	}
+	if m.bySessionID == nil {
+		m.bySessionID = map[string][]ports.AttachmentRecord{}
+	}
+	if a.ID == 0 {
+		a.ID = int64(len(m.byIdemKey) + 1)
+	}
+	if a.CreatedAt.IsZero() {
+		a.CreatedAt = time.Unix(1_700_000_000, 0).UTC()
 	}
 	if a.IdempotencyKey != "" {
-		m.byIdemKey[a.ReportID+"|"+a.IdempotencyKey] = a
+		m.byIdemKey[a.ReportID+"|"+a.UploadSessionID+"|"+a.IdempotencyKey] = a
 	}
-	m.byReportID[a.ReportID] = append(m.byReportID[a.ReportID], a)
-	return nil
+	if a.ReportID != "" {
+		m.byReportID[a.ReportID] = append(m.byReportID[a.ReportID], a)
+	}
+	if a.UploadSessionID != "" {
+		m.bySessionID[a.UploadSessionID] = append(m.bySessionID[a.UploadSessionID], a)
+	}
+	return a, nil
 }
 
-func (m *memAttachments) GetByIdempotencyKey(_ context.Context, reportID string, key string) (ports.AttachmentRecord, bool, error) {
-	a, ok := m.byIdemKey[reportID+"|"+key]
+func (m *memAttachments) GetByIdempotencyKey(_ context.Context, reportID string, uploadSessionID string, key string) (ports.AttachmentRecord, bool, error) {
+	a, ok := m.byIdemKey[reportID+"|"+uploadSessionID+"|"+key]
 	return a, ok, nil
 }
 
@@ -47,19 +68,71 @@ func (m *memAttachments) ExistsByStorageKey(_ context.Context, storageKey string
 	return false, nil
 }
 
+func (m *memAttachments) BindSessionToReport(_ context.Context, uploadSessionID string, reportID string) error {
+	items := append([]ports.AttachmentRecord(nil), m.bySessionID[uploadSessionID]...)
+	for i := range items {
+		items[i].ReportID = reportID
+		items[i].UploadSessionID = ""
+		m.byReportID[reportID] = append(m.byReportID[reportID], items[i])
+	}
+	delete(m.bySessionID, uploadSessionID)
+	return nil
+}
+
+func (m *memAttachments) DeleteFromSessionByStorageKey(_ context.Context, uploadSessionID string, storageKey string) (bool, error) {
+	items := m.bySessionID[uploadSessionID]
+	if len(items) == 0 {
+		return false, nil
+	}
+	out := items[:0]
+	deleted := false
+	for _, a := range items {
+		if a.StorageKey == storageKey {
+			deleted = true
+			continue
+		}
+		out = append(out, a)
+	}
+	if deleted {
+		if len(out) == 0 {
+			delete(m.bySessionID, uploadSessionID)
+		} else {
+			m.bySessionID[uploadSessionID] = out
+		}
+	}
+	return deleted, nil
+}
+
+type memUploadSessions struct {
+	byID map[string]ports.UploadSessionRecord
+}
+
+func (m *memUploadSessions) Create(_ context.Context) (ports.UploadSessionRecord, error) {
+	r := ports.UploadSessionRecord{ID: "s1", CreatedAt: time.Now().UTC()}
+	m.byID[r.ID] = r
+	return r, nil
+}
+func (m *memUploadSessions) GetByID(_ context.Context, id string) (ports.UploadSessionRecord, bool, error) {
+	r, ok := m.byID[id]
+	return r, ok, nil
+}
+
 type memReports struct {
 	byID map[string]ports.ReportRecord
 }
 
-func (m *memReports) Create(_ context.Context, r ports.ReportRecord) error {
+func (m *memReports) Create(_ context.Context, r ports.ReportRecord) (ports.ReportRecord, error) {
 	m.byID[r.ID] = r
-	return nil
+	return r, nil
 }
 func (m *memReports) GetByID(_ context.Context, id string) (ports.ReportRecord, bool, error) {
 	r, ok := m.byID[id]
 	return r, ok, nil
 }
-func (m *memReports) UpdateStatus(_ context.Context, _ string, _ string, _ time.Time) error {
+func (m *memReports) UpdateStatus(_ context.Context, _ string, _ string) error {
+	return nil
+}
+func (m *memReports) UpdateMeta(_ context.Context, _ string, _ string, _ string) error {
 	return nil
 }
 func (m *memReports) ListAll(_ context.Context, _ ports.ReportListFilter) ([]ports.ReportRecord, int, error) {
@@ -111,6 +184,7 @@ func TestService_Upload_ValidatesMimeAndSize(t *testing.T) {
 
 	svc := NewService(Deps{
 		Reports:      reports,
+		Sessions:     &memUploadSessions{byID: map[string]ports.UploadSessionRecord{}},
 		Attachments:  atts,
 		Storage:      st,
 		Clock:        fakeClock{t: now},
@@ -152,6 +226,7 @@ func TestService_Upload_Idempotent(t *testing.T) {
 
 	svc := NewService(Deps{
 		Reports:      reports,
+		Sessions:     &memUploadSessions{byID: map[string]ports.UploadSessionRecord{}},
 		Attachments:  atts,
 		Storage:      st,
 		Clock:        fakeClock{t: now},
@@ -191,6 +266,7 @@ func TestService_Upload_CleansUpStorageOnDBError(t *testing.T) {
 
 	svc := NewService(Deps{
 		Reports:      reports,
+		Sessions:     &memUploadSessions{byID: map[string]ports.UploadSessionRecord{}},
 		Attachments:  atts,
 		Storage:      st,
 		Clock:        fakeClock{t: now},
@@ -224,6 +300,7 @@ func TestService_Upload_SanitizesStorageKeyParts(t *testing.T) {
 
 	svc := NewService(Deps{
 		Reports:      reports,
+		Sessions:     &memUploadSessions{byID: map[string]ports.UploadSessionRecord{}},
 		Attachments:  atts,
 		Storage:      st,
 		Clock:        fakeClock{t: now},
@@ -256,9 +333,13 @@ func TestService_Finalize_CreatesRecordWithoutStoragePut(t *testing.T) {
 		"r1": {ID: "r1", ReporterName: "Ivan", CreatedAt: now, UpdatedAt: now},
 	}}
 	atts := &memAttachments{byReportID: map[string][]ports.AttachmentRecord{}, byIdemKey: map[string]ports.AttachmentRecord{}}
+	sessions := &memUploadSessions{byID: map[string]ports.UploadSessionRecord{
+		"s1": {ID: "s1", CreatedAt: now},
+	}}
 
 	svc := NewService(Deps{
 		Reports:      reports,
+		Sessions:     sessions,
 		Attachments:  atts,
 		Storage:      nil,
 		Clock:        fakeClock{t: now},
@@ -268,17 +349,17 @@ func TestService_Finalize_CreatesRecordWithoutStoragePut(t *testing.T) {
 	})
 
 	got, err := svc.Finalize(context.Background(), FinalizeRequest{
-		ReportID:    "r1",
-		UploadID:    "upload-1",
-		FileName:    "../x.png",
-		ContentType: "image/png",
-		FileSize:    10,
-		StorageKey:  "tus/upload-1",
+		UploadSessionID: "s1",
+		UploadID:        "upload-1",
+		FileName:        "../x.png",
+		ContentType:     "image/png",
+		FileSize:        10,
+		StorageKey:      "tus/upload-1",
 	})
 	if err != nil {
 		t.Fatalf("Finalize error: %v", err)
 	}
-	if got.ID != "upload-1" || got.ReportID != "r1" || got.StorageKey != "tus/upload-1" {
+	if got.ID == 0 || got.ReportID != "" || got.StorageKey != "tus/upload-1" {
 		t.Fatalf("unexpected dto: %+v", got)
 	}
 }
@@ -291,7 +372,7 @@ func TestService_ListForReport_EnforcesAccess(t *testing.T) {
 	atts := &memAttachments{
 		byReportID: map[string][]ports.AttachmentRecord{
 			"r1": {{
-				ID:          "a1",
+				ID:          1,
 				ReportID:    "r1",
 				FileName:    "x.png",
 				ContentType: "image/png",
@@ -329,7 +410,7 @@ func TestService_ListForReport_EnforcesAccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(list) != 1 || list[0].ID != "a1" {
+	if len(list) != 1 || list[0].ID != 1 {
 		t.Fatalf("unexpected list: %+v", list)
 	}
 }

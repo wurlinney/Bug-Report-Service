@@ -11,11 +11,11 @@ var ErrUniqueViolation = errors.New("unique violation")
 type UserRepository interface {
 	GetByEmail(ctx context.Context, email string) (u UserRecord, found bool, err error)
 	GetByID(ctx context.Context, id string) (u UserRecord, found bool, err error)
-	Create(ctx context.Context, u UserRecord) error
+	Create(ctx context.Context, u UserRecord) (UserRecord, error)
 }
 
 type RefreshTokenRepository interface {
-	Save(ctx context.Context, rt RefreshTokenRecord) error
+	Save(ctx context.Context, rt RefreshTokenRecord) (RefreshTokenRecord, error)
 	GetActiveByID(ctx context.Context, id string) (rt RefreshTokenRecord, found bool, err error)
 	Revoke(ctx context.Context, id string, when time.Time) error
 }
@@ -26,7 +26,7 @@ type PasswordHasher interface {
 }
 
 type AccessTokenIssuer interface {
-	IssueAccessToken(userID string, role string) (string, error)
+	IssueAccessToken(userID string) (string, error)
 }
 
 type Random interface {
@@ -43,7 +43,6 @@ type UserRecord struct {
 	Name         string
 	Email        string
 	PasswordHash string
-	Role         string
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
@@ -51,10 +50,9 @@ type UserRecord struct {
 type RefreshTokenRecord struct {
 	ID         string
 	UserID     string
-	Role       string
 	TokenHash  string
 	ExpiresAt  time.Time
 	CreatedAt  time.Time
-	RevokedAt  *time.Time
-	ReplacedBy *string
+	RevokedAt  *time.Time // maybe nil
+	ReplacedBy *string    // maybe nil
 }
