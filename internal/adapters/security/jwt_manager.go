@@ -26,7 +26,7 @@ type AccessClaims struct {
 }
 
 type JWTManager interface {
-	IssueAccessToken(userID string, role string) (string, error)
+	IssueAccessToken(userID string) (string, error)
 	VerifyAccessToken(token string) (AccessClaims, error)
 }
 
@@ -41,7 +41,7 @@ func NewJWTManager(cfg JWTConfig) JWTManager {
 	return &jwtManager{cfg: cfg}
 }
 
-func (m *jwtManager) IssueAccessToken(userID string, role string) (string, error) {
+func (m *jwtManager) IssueAccessToken(userID string) (string, error) {
 	now := m.cfg.Now()
 	claims := AccessClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -50,7 +50,7 @@ func (m *jwtManager) IssueAccessToken(userID string, role string) (string, error
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(m.cfg.AccessTTL)),
 		},
-		Role: role,
+		Role: "moderator",
 	}
 
 	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
