@@ -16,26 +16,37 @@ func NewNoteRepository(db *pgxpool.Pool) *NoteRepository {
 	return &NoteRepository{db: db}
 }
 
-func (r *NoteRepository) Create(ctx context.Context, n ports.InternalNoteRecord) error {
+func (r *NoteRepository) Create(ctx context.Context, n ports.InternalNoteRecord) (ports.InternalNoteRecord, error) {
 	const q = `
-INSERT INTO internal_notes (id, bug_report_id, author_moderator_id, text, created_at)
-VALUES ($1,$2,$3,$4,$5)
+INSERT INTO internal_notes (bug_report_id, author_moderator_id, text)
+VALUES ($1::bigint,$2::bigint,$3)
+RETURNING id::text, bug_report_id::text, author_moderator_id::text, text, created_at
 `
-	_, err := r.db.Exec(ctx, q, n.ID, n.ReportID, n.AuthorModeratorID, n.Text, n.CreatedAt)
-	return err
+	var created ports.InternalNoteRecord
+	err := r.db.QueryRow(ctx, q, n.ReportID, n.AuthorModeratorID, n.Text).Scan(
+		&created.ID,
+		&created.ReportID,
+		&created.AuthorModeratorID,
+		&created.Text,
+		&created.CreatedAt,
+	)
+	if err != nil {
+		return ports.InternalNoteRecord{}, err
+	}
+	return created, nil
 }
 
 func (r *NoteRepository) ListByReport(ctx context.Context, reportID string, limit int, offset int) ([]ports.InternalNoteRecord, int, error) {
-	const totalQ = `SELECT COUNT(*) FROM internal_notes WHERE bug_report_id = $1`
+	const totalQ = `SELECT COUNT(*) FROM internal_notes WHERE bug_report_id = $1::bigint`
 	var total int
 	if err := r.db.QueryRow(ctx, totalQ, reportID).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
 	const listQ = `
-SELECT id, bug_report_id, author_moderator_id, text, created_at
+SELECT id::text, bug_report_id::text, author_moderator_id::text, text, created_at
 FROM internal_notes
-WHERE bug_report_id = $1
+WHERE bug_report_id = $1::bigint
 ORDER BY created_at
 LIMIT $2 OFFSET $3
 `
