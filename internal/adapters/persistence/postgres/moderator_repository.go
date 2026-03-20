@@ -21,7 +21,7 @@ func NewModeratorRepository(db *pgxpool.Pool) *ModeratorRepository {
 
 func (r *ModeratorRepository) GetByEmail(ctx context.Context, email string) (ports.UserRecord, bool, error) {
 	const q = `
-SELECT id, name, email, password_hash, role, created_at, updated_at
+SELECT id::text, name, email, password_hash, created_at, updated_at
 FROM moderators
 WHERE email = $1
 `
@@ -30,9 +30,9 @@ WHERE email = $1
 
 func (r *ModeratorRepository) GetByID(ctx context.Context, id string) (ports.UserRecord, bool, error) {
 	const q = `
-SELECT id, name, email, password_hash, role, created_at, updated_at
+SELECT id::text, name, email, password_hash, created_at, updated_at
 FROM moderators
-WHERE id = $1
+WHERE id = $1::bigint
 `
 	return r.getOne(ctx, q, id)
 }
@@ -44,7 +44,6 @@ func (r *ModeratorRepository) getOne(ctx context.Context, query string, arg stri
 		&u.Name,
 		&u.Email,
 		&u.PasswordHash,
-		&u.Role,
 		&u.CreatedAt,
 		&u.UpdatedAt,
 	)
@@ -57,20 +56,42 @@ func (r *ModeratorRepository) getOne(ctx context.Context, query string, arg stri
 	return u, true, nil
 }
 
-func (r *ModeratorRepository) Create(ctx context.Context, u ports.UserRecord) error {
+func (r *ModeratorRepository) Create(ctx context.Context, u ports.UserRecord) (ports.UserRecord, error) {
 	const q = `
-INSERT INTO moderators (id, name, email, password_hash, role, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO moderators (name, email, password_hash)
+VALUES ($1, $2, $3)
+RETURNING id::text, name, email, password_hash, created_at, updated_at
 `
-	_, err := r.db.Exec(ctx, q, u.ID, u.Name, u.Email, u.PasswordHash, u.Role, u.CreatedAt, u.UpdatedAt)
+	var created ports.UserRecord
+	err := r.db.QueryRow(ctx, q, u.Name, u.Email, u.PasswordHash).Scan(
+		&created.ID,
+		&created.Name,
+		&created.Email,
+		&created.PasswordHash,
+		&created.CreatedAt,
+		&created.UpdatedAt,
+	)
 	if err == nil {
-		return nil
+		return created, nil
 	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
 		if pgErr.Code == "23505" { // unique_violation
-			return ports.ErrUniqueViolation
+			return ports.UserRecord{}, ports.ErrUniqueViolation
 		}
 	}
+	return ports.UserRecord{}, err
+}
+
+func (r *ModeratorRepository) UpsertByEmail(ctx context.Context, name string, email string, passwordHash string) error {
+	const q = `
+INSERT INTO moderators (name, email, password_hash)
+VALUES ($1, $2, $3)
+ON CONFLICT (email) DO UPDATE SET
+  name = EXCLUDED.name,
+  password_hash = EXCLUDED.password_hash,
+  updated_at = NOW()
+`
+	_, err := r.db.Exec(ctx, q, name, email, passwordHash)
 	return err
 }

@@ -14,7 +14,14 @@ import (
 )
 
 type changeStatusReq struct {
-	Status string `json:"status"`
+	Status    string `json:"status"`
+	Priority  string `json:"priority,omitempty"`
+	Influence string `json:"influence,omitempty"`
+}
+
+type changeMetaReq struct {
+	Priority  string `json:"priority"`
+	Influence string `json:"influence"`
 }
 
 func listAllReportsHandler(deps Deps) http.HandlerFunc {
@@ -73,6 +80,8 @@ func listAllReportsHandler(deps Deps) http.HandlerFunc {
 				"reporter_name": it.ReporterName,
 				"description":   it.Description,
 				"status":        it.Status,
+				"influence":     it.Influence,
+				"priority":      it.Priority,
 				"created_at":    it.CreatedAt.Unix(),
 				"updated_at":    it.UpdatedAt.Unix(),
 			})
@@ -112,6 +121,8 @@ func getReportHandler(deps Deps) http.HandlerFunc {
 			"reporter_name": got.ReporterName,
 			"description":   got.Description,
 			"status":        got.Status,
+			"influence":     got.Influence,
+			"priority":      got.Priority,
 			"created_at":    got.CreatedAt.Unix(),
 			"updated_at":    got.UpdatedAt.Unix(),
 		})
@@ -140,11 +151,69 @@ func changeReportStatusHandler(deps Deps) http.HandlerFunc {
 			return
 		}
 		req.Status = strings.TrimSpace(req.Status)
+		req.Priority = strings.TrimSpace(req.Priority)
+		req.Influence = strings.TrimSpace(req.Influence)
 
 		if err := deps.ReportService.ChangeStatus(r.Context(), report.ChangeStatusRequest{
 			ActorRole: p.Role,
 			ReportID:  id,
 			Status:    req.Status,
+		}); err != nil {
+			writeReportServiceError(w, err)
+			return
+		}
+
+		// Backward-compatible extension: /status can also update priority/influence
+		// when frontend sends them in the same payload.
+		if req.Priority != "" || req.Influence != "" {
+			if req.Priority == "" || req.Influence == "" {
+				writeError(w, http.StatusBadRequest, "validation_error", "priority and influence are required together")
+				return
+			}
+			if err := deps.ReportService.ChangeMeta(r.Context(), report.ChangeMetaRequest{
+				ActorRole: p.Role,
+				ReportID:  id,
+				Priority:  req.Priority,
+				Influence: req.Influence,
+			}); err != nil {
+				writeReportServiceError(w, err)
+				return
+			}
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+	}
+}
+
+func changeReportMetaHandler(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := requirePrincipal(w, r)
+		if !ok || deps.ReportService == nil {
+			if ok {
+				writeError(w, http.StatusInternalServerError, "misconfigured", "service misconfigured")
+			}
+			return
+		}
+
+		id := strings.TrimSpace(chi.URLParam(r, "id"))
+		if id == "" {
+			writeError(w, http.StatusBadRequest, "validation_error", "id is required")
+			return
+		}
+
+		var req changeMetaReq
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "invalid json body")
+			return
+		}
+		req.Priority = strings.TrimSpace(req.Priority)
+		req.Influence = strings.TrimSpace(req.Influence)
+
+		if err := deps.ReportService.ChangeMeta(r.Context(), report.ChangeMetaRequest{
+			ActorRole: p.Role,
+			ReportID:  id,
+			Priority:  req.Priority,
+			Influence: req.Influence,
 		}); err != nil {
 			writeReportServiceError(w, err)
 			return

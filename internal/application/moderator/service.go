@@ -13,7 +13,6 @@ type Profile struct {
 	ID        string
 	Name      string
 	Email     string
-	Role      string
 	CreatedAt int64
 	UpdatedAt int64
 }
@@ -38,7 +37,6 @@ func (s *Service) GetProfile(ctx context.Context, moderatorID string) (Profile, 
 		ID:        u.ID,
 		Name:      u.Name,
 		Email:     u.Email,
-		Role:      u.Role,
 		CreatedAt: u.CreatedAt.Unix(),
 		UpdatedAt: u.UpdatedAt.Unix(),
 	}, nil
