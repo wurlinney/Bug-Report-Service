@@ -10,9 +10,9 @@ import (
 )
 
 type Deps struct {
-	Reports ports.ReportRepository
-	Clock   ports.Clock
-	Random  ports.Random
+	Reports     ports.ReportRepository
+	Sessions    ports.UploadSessionRepository
+	Attachments ports.AttachmentRepository
 }
 
 type Service struct {
@@ -41,20 +41,31 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (ReportDTO, err
 		return ReportDTO{}, ErrBadInput
 	}
 
-	now := s.deps.Clock.Now()
-	id := s.deps.Random.NewID()
 	r := ports.ReportRecord{
-		ID:           id,
 		ReporterName: reporterName,
 		Description:  desc,
 		Status:       StatusNew,
-		CreatedAt:    now,
-		UpdatedAt:    now,
 	}
-	if err := s.deps.Reports.Create(ctx, r); err != nil {
+	created, err := s.deps.Reports.Create(ctx, r)
+	if err != nil {
 		return ReportDTO{}, err
 	}
-	return toDTO(r), nil
+	if uploadSessionID := strings.TrimSpace(req.UploadSessionID); uploadSessionID != "" {
+		if s.deps.Sessions == nil || s.deps.Attachments == nil {
+			return ReportDTO{}, ErrBadInput
+		}
+		_, found, err := s.deps.Sessions.GetByID(ctx, uploadSessionID)
+		if err != nil {
+			return ReportDTO{}, err
+		}
+		if !found {
+			return ReportDTO{}, ErrBadInput
+		}
+		if err := s.deps.Attachments.BindSessionToReport(ctx, uploadSessionID, created.ID); err != nil {
+			return ReportDTO{}, err
+		}
+	}
+	return toDTO(created), nil
 }
 
 func (s *Service) GetForActor(ctx context.Context, actorRole string, _ string, reportID string) (ReportDTO, error) {
@@ -78,8 +89,23 @@ func (s *Service) ChangeStatus(ctx context.Context, req ChangeStatusRequest) err
 	if req.ReportID == "" || !IsValidStatus(req.Status) {
 		return ErrBadInput
 	}
-	now := s.deps.Clock.Now()
-	if err := s.deps.Reports.UpdateStatus(ctx, req.ReportID, req.Status, now); err != nil {
+	if err := s.deps.Reports.UpdateStatus(ctx, req.ReportID, req.Status); err != nil {
+		if errors.Is(err, ports.ErrNotFound) {
+			return ErrNotFound
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *Service) ChangeMeta(ctx context.Context, req ChangeMetaRequest) error {
+	if !policy.CanModeratorChangeStatus(req.ActorRole) {
+		return ErrForbidden
+	}
+	if req.ReportID == "" || !IsValidPriority(req.Priority) || !IsValidInfluence(req.Influence) {
+		return ErrBadInput
+	}
+	if err := s.deps.Reports.UpdateMeta(ctx, req.ReportID, req.Priority, req.Influence); err != nil {
 		if errors.Is(err, ports.ErrNotFound) {
 			return ErrNotFound
 		}
@@ -121,6 +147,8 @@ func toDTO(r ports.ReportRecord) ReportDTO {
 		ReporterName: r.ReporterName,
 		Description:  r.Description,
 		Status:       r.Status,
+		Influence:    r.Influence,
+		Priority:     r.Priority,
 		CreatedAt:    r.CreatedAt,
 		UpdatedAt:    r.UpdatedAt,
 	}

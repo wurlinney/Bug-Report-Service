@@ -13,9 +13,18 @@ type memReports struct {
 	byID map[string]ports.ReportRecord
 }
 
-func (m *memReports) Create(_ context.Context, r ports.ReportRecord) error {
+func (m *memReports) Create(_ context.Context, r ports.ReportRecord) (ports.ReportRecord, error) {
+	if r.ID == "" {
+		r.ID = "r1"
+	}
+	if r.CreatedAt.IsZero() {
+		r.CreatedAt = time.Unix(1_700_000_000, 0).UTC()
+	}
+	if r.UpdatedAt.IsZero() {
+		r.UpdatedAt = r.CreatedAt
+	}
 	m.byID[r.ID] = r
-	return nil
+	return r, nil
 }
 
 func (m *memReports) GetByID(_ context.Context, id string) (ports.ReportRecord, bool, error) {
@@ -23,13 +32,25 @@ func (m *memReports) GetByID(_ context.Context, id string) (ports.ReportRecord, 
 	return r, ok, nil
 }
 
-func (m *memReports) UpdateStatus(_ context.Context, id string, status string, when time.Time) error {
+func (m *memReports) UpdateStatus(_ context.Context, id string, status string) error {
 	r, ok := m.byID[id]
 	if !ok {
 		return ports.ErrNotFound
 	}
 	r.Status = status
-	r.UpdatedAt = when
+	r.UpdatedAt = r.UpdatedAt.Add(time.Second)
+	m.byID[id] = r
+	return nil
+}
+
+func (m *memReports) UpdateMeta(_ context.Context, id string, priority string, influence string) error {
+	r, ok := m.byID[id]
+	if !ok {
+		return ports.ErrNotFound
+	}
+	r.Priority = priority
+	r.Influence = influence
+	r.UpdatedAt = r.UpdatedAt.Add(time.Second)
 	m.byID[id] = r
 	return nil
 }
@@ -42,22 +63,10 @@ func (m *memReports) ListAll(_ context.Context, f ports.ReportListFilter) ([]por
 	return ports.ApplyReportListFilter(out, f)
 }
 
-type fakeClock struct{ t time.Time }
-
-func (c fakeClock) Now() time.Time { return c.t }
-
-type fakeRandom struct{}
-
-func (r fakeRandom) NewID() string             { return "r1" }
-func (r fakeRandom) NewToken() (string, error) { return "unused", nil }
-
 func TestService_CreatePublicReport(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0).UTC()
 	repo := &memReports{byID: map[string]ports.ReportRecord{}}
 	s := NewService(Deps{
 		Reports: repo,
-		Clock:   fakeClock{t: now},
-		Random:  fakeRandom{},
 	})
 
 	got, err := s.Create(context.Background(), CreateRequest{
@@ -79,8 +88,6 @@ func TestService_ListAll_ForModerator(t *testing.T) {
 	}}
 	s := NewService(Deps{
 		Reports: repo,
-		Clock:   fakeClock{t: now},
-		Random:  fakeRandom{},
 	})
 
 	items, total, err := s.ListAll(context.Background(), ListAllRequest{
@@ -103,8 +110,6 @@ func TestService_GetForActor_ForbiddenForNonModerator(t *testing.T) {
 	}}
 	s := NewService(Deps{
 		Reports: repo,
-		Clock:   fakeClock{t: now},
-		Random:  fakeRandom{},
 	})
 
 	_, err := s.GetForActor(context.Background(), "user", "u1", "r1")

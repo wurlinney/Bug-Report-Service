@@ -3,14 +3,22 @@ package report
 import "time"
 
 type CreateRequest struct {
-	ReporterName string
-	Description  string
+	ReporterName    string
+	Description     string
+	UploadSessionID string
 }
 
 type ChangeStatusRequest struct {
 	ActorRole string
 	ReportID  string
 	Status    string
+}
+
+type ChangeMetaRequest struct {
+	ActorRole string
+	ReportID  string
+	Priority  string
+	Influence string
 }
 
 type ListForUserRequest struct {
@@ -43,6 +51,8 @@ type ReportDTO struct {
 	ReporterName string
 	Description  string
 	Status       string
+	Influence    string
+	Priority     string
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }

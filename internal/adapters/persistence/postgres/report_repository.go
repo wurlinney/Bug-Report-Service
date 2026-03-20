@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"bug-report-service/internal/application/ports"
 
@@ -25,20 +24,24 @@ func NewReportRepository(db *pgxpool.Pool) *ReportRepository {
 	return &ReportRepository{db: db}
 }
 
-func (r *ReportRepository) Create(ctx context.Context, rep ports.ReportRecord) error {
+func (r *ReportRepository) Create(ctx context.Context, rep ports.ReportRecord) (ports.ReportRecord, error) {
 	const q = `
-INSERT INTO bug_reports (id, reporter_name, description, status, created_at, updated_at)
-VALUES ($1,$2,$3,$4,$5,$6)
+INSERT INTO bug_reports (reporter_name, description, status)
+VALUES ($1,$2,$3)
+RETURNING id::text, reporter_name, description, status, influence, priority, created_at, updated_at
 `
-	_, err := r.db.Exec(ctx, q, rep.ID, rep.ReporterName, rep.Description, rep.Status, rep.CreatedAt, rep.UpdatedAt)
-	return err
+	created, err := scanReport(r.db.QueryRow(ctx, q, rep.ReporterName, rep.Description, rep.Status))
+	if err != nil {
+		return ports.ReportRecord{}, err
+	}
+	return created, nil
 }
 
 func (r *ReportRepository) GetByID(ctx context.Context, id string) (ports.ReportRecord, bool, error) {
 	const q = `
-SELECT r.id, r.reporter_name, r.description, r.status, r.created_at, r.updated_at
+SELECT r.id::text, r.reporter_name, r.description, r.status, r.influence, r.priority, r.created_at, r.updated_at
 FROM bug_reports r
-WHERE r.id = $1
+WHERE r.id = $1::bigint
 `
 	rep, err := scanReport(r.db.QueryRow(ctx, q, id))
 	if err != nil {
@@ -50,13 +53,30 @@ WHERE r.id = $1
 	return rep, true, nil
 }
 
-func (r *ReportRepository) UpdateStatus(ctx context.Context, id string, status string, updatedAt time.Time) error {
+func (r *ReportRepository) UpdateStatus(ctx context.Context, id string, status string) error {
 	const q = `
 UPDATE bug_reports
-SET status = $2, updated_at = $3
-WHERE id = $1
+SET status = $2
+WHERE id = $1::bigint
 `
-	ct, err := r.db.Exec(ctx, q, id, status, updatedAt)
+	ct, err := r.db.Exec(ctx, q, id, status)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ports.ErrNotFound
+	}
+	return nil
+}
+
+func (r *ReportRepository) UpdateMeta(ctx context.Context, id string, priority string, influence string) error {
+	const q = `
+UPDATE bug_reports
+SET priority = $2,
+    influence = $3
+WHERE id = $1::bigint
+`
+	ct, err := r.db.Exec(ctx, q, id, priority, influence)
 	if err != nil {
 		return err
 	}
@@ -101,7 +121,7 @@ func (r *ReportRepository) list(ctx context.Context, f ports.ReportListFilter) (
 	// list
 	args2 := append(append([]any{}, args...), limit, offset)
 	listQ := `
-SELECT r.id, r.reporter_name, r.description, r.status, r.created_at, r.updated_at
+SELECT r.id::text, r.reporter_name, r.description, r.status, r.influence, r.priority, r.created_at, r.updated_at
 FROM bug_reports r` + where + `
 ORDER BY ` + sortCol + ` ` + dir + `
 LIMIT ` + fmt.Sprintf("$%d", len(args)+1) + ` OFFSET ` + fmt.Sprintf("$%d", len(args)+2)
@@ -168,6 +188,8 @@ func scanReport(s reportScanner) (ports.ReportRecord, error) {
 		&rep.ReporterName,
 		&rep.Description,
 		&rep.Status,
+		&rep.Influence,
+		&rep.Priority,
 		&rep.CreatedAt,
 		&rep.UpdatedAt,
 	)

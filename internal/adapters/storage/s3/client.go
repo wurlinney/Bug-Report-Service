@@ -15,7 +15,19 @@ import (
 )
 
 func NewClient(ctx context.Context, cfg appconfig.Config) (*s3.Client, error) {
-	if strings.TrimSpace(cfg.S3.Endpoint) == "" {
+	return newClient(ctx, cfg, cfg.S3.Endpoint)
+}
+
+func NewPublicClient(ctx context.Context, cfg appconfig.Config) (*s3.Client, error) {
+	endpoint := cfg.S3.PublicEndpoint
+	if strings.TrimSpace(endpoint) == "" {
+		endpoint = cfg.S3.Endpoint
+	}
+	return newClient(ctx, cfg, endpoint)
+}
+
+func newClient(ctx context.Context, cfg appconfig.Config, endpoint string) (*s3.Client, error) {
+	if strings.TrimSpace(endpoint) == "" {
 		return nil, errors.New("S3_ENDPOINT is empty")
 	}
 	if strings.TrimSpace(cfg.S3.Region) == "" {
@@ -24,7 +36,7 @@ func NewClient(ctx context.Context, cfg appconfig.Config) (*s3.Client, error) {
 	if strings.TrimSpace(cfg.S3.AccessKey) == "" || strings.TrimSpace(cfg.S3.SecretKey) == "" {
 		return nil, errors.New("S3_ACCESS_KEY or S3_SECRET_KEY is empty")
 	}
-	if _, err := url.Parse(cfg.S3.Endpoint); err != nil {
+	if _, err := url.Parse(endpoint); err != nil {
 		return nil, err
 	}
 
@@ -38,7 +50,7 @@ func NewClient(ctx context.Context, cfg appconfig.Config) (*s3.Client, error) {
 
 	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
 		o.UsePathStyle = true
-		o.BaseEndpoint = aws.String(cfg.S3.Endpoint)
+		o.BaseEndpoint = aws.String(endpoint)
 	})
 	return client, nil
 }
