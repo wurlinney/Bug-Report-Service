@@ -4,9 +4,9 @@ services:
     env_file:
       - ../.env
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-bug}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bug}
-      POSTGRES_DB: ${POSTGRES_DB:-bugdb}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     healthcheck:
@@ -23,8 +23,8 @@ services:
     env_file:
       - ../.env
     environment:
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY}
     ports:
       - "${MINIO_PORT:-9000}:9000"
       - "${MINIO_CONSOLE_PORT:-9001}:9001"
@@ -46,15 +46,15 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >
-        mc alias set local http://minio:9000 ${S3_ACCESS_KEY:-minioadmin} ${S3_SECRET_KEY:-minioadmin} &&
-        mc mb -p local/${S3_BUCKET:-bug-attachments} || true &&
-        mc anonymous set none local/${S3_BUCKET:-bug-attachments} || true
+        mc alias set local http://minio:9000 ${S3_ACCESS_KEY} ${S3_SECRET_KEY} &&
+        mc mb -p local/${S3_BUCKET} || true &&
+        mc anonymous set none local/${S3_BUCKET} || true
 
   migrate:
     image: migrate/migrate
     command: [
       "-path", "/migrations",
-      "-database", "postgres://${POSTGRES_USER:-bug}:${POSTGRES_PASSWORD:-bug}@postgres:5432/${POSTGRES_DB:-bugdb}?sslmode=disable",
+      "-database", "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable",
       "up"
     ]
     volumes:
