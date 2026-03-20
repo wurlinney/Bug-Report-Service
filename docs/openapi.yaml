@@ -88,6 +88,21 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/public/upload-sessions:
+    post:
+      tags: [Public]
+      summary: Create upload session for pre-submit attachments
+      security: []
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadSession"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/uploads:
     post:
       tags: [Uploads (tus)]
@@ -95,7 +110,7 @@ paths:
       security: []
       description: |
         tus protocol endpoint. Use `Upload-Metadata` with keys:
-        - `report_id` (base64)
+        - `upload_session_id` (base64)
         - `filename` (base64)
         - `content_type` (base64)
         - `idempotency_key` (base64, optional)
@@ -446,6 +461,13 @@ components:
       properties:
         reporter_name: { type: string }
         description: { type: string }
+        upload_session_id: { type: string }
+
+    UploadSession:
+      type: object
+      properties:
+        id: { type: string }
+        created_at: { type: integer, format: int64 }
 
     PublicCreateReportResponse:
       allOf:
@@ -481,7 +503,6 @@ components:
         id: { type: string }
         name: { type: string }
         email: { type: string }
-        role: { type: string }
         created_at: { type: integer, format: int64 }
         updated_at: { type: integer, format: int64 }
 
