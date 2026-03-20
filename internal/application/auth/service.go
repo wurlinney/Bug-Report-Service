@@ -55,7 +55,7 @@ func (s *Service) Login(ctx context.Context, req LoginRequest) (AuthResponse, er
 		return AuthResponse{}, ErrInvalidCredentials
 	}
 
-	return s.issueTokens(ctx, u.ID, u.Role)
+	return s.issueTokens(ctx, u.ID)
 }
 
 func (s *Service) Refresh(ctx context.Context, req RefreshRequest) (AuthResponse, error) {
@@ -85,11 +85,11 @@ func (s *Service) Refresh(ctx context.Context, req RefreshRequest) (AuthResponse
 
 	// rotate: revoke old, issue new
 	_ = s.deps.RefreshTokens.Revoke(ctx, rt.ID, now)
-	return s.issueTokens(ctx, rt.UserID, rt.Role)
+	return s.issueTokens(ctx, rt.UserID)
 }
 
-func (s *Service) issueTokens(ctx context.Context, userID string, role string) (AuthResponse, error) {
-	access, err := s.deps.JWT.IssueAccessToken(userID, role)
+func (s *Service) issueTokens(ctx context.Context, userID string) (AuthResponse, error) {
+	access, err := s.deps.JWT.IssueAccessToken(userID)
 	if err != nil {
 		return AuthResponse{}, err
 	}
@@ -98,24 +98,20 @@ func (s *Service) issueTokens(ctx context.Context, userID string, role string) (
 	if err != nil {
 		return AuthResponse{}, err
 	}
-	refreshID := s.deps.Random.NewID()
-
 	now := s.deps.Clock.Now()
 	rt := ports.RefreshTokenRecord{
-		ID:        refreshID,
 		UserID:    userID,
-		Role:      role,
 		TokenHash: hashRefresh(refreshSecret),
 		ExpiresAt: now.Add(s.deps.RefreshTTL),
-		CreatedAt: now,
 	}
-	if err := s.deps.RefreshTokens.Save(ctx, rt); err != nil {
+	saved, err := s.deps.RefreshTokens.Save(ctx, rt)
+	if err != nil {
 		return AuthResponse{}, err
 	}
 
 	return AuthResponse{
 		AccessToken:    access,
-		RefreshTokenID: refreshID,
+		RefreshTokenID: saved.ID,
 		RefreshToken:   refreshSecret,
 	}, nil
 }

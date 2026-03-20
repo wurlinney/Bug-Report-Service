@@ -22,22 +22,37 @@ func (m *memUsers) GetByID(_ context.Context, id string) (ports.UserRecord, bool
 	u, ok := m.byID[id]
 	return u, ok, nil
 }
-func (m *memUsers) Create(_ context.Context, u ports.UserRecord) error {
+func (m *memUsers) Create(_ context.Context, u ports.UserRecord) (ports.UserRecord, error) {
 	if _, exists := m.byEmail[u.Email]; exists {
-		return ports.ErrUniqueViolation
+		return ports.UserRecord{}, ports.ErrUniqueViolation
+	}
+	if u.ID == "" {
+		u.ID = "m-created"
+	}
+	if u.CreatedAt.IsZero() {
+		u.CreatedAt = time.Unix(1_700_000_000, 0).UTC()
+	}
+	if u.UpdatedAt.IsZero() {
+		u.UpdatedAt = u.CreatedAt
 	}
 	m.byEmail[u.Email] = u
 	m.byID[u.ID] = u
-	return nil
+	return u, nil
 }
 
 type memRefresh struct {
 	byTokenID map[string]ports.RefreshTokenRecord
 }
 
-func (m *memRefresh) Save(_ context.Context, rt ports.RefreshTokenRecord) error {
+func (m *memRefresh) Save(_ context.Context, rt ports.RefreshTokenRecord) (ports.RefreshTokenRecord, error) {
+	if rt.ID == "" {
+		rt.ID = "id-1"
+	}
+	if rt.CreatedAt.IsZero() {
+		rt.CreatedAt = time.Unix(1_700_000_000, 0).UTC()
+	}
 	m.byTokenID[rt.ID] = rt
-	return nil
+	return rt, nil
 }
 func (m *memRefresh) GetActiveByID(_ context.Context, id string) (ports.RefreshTokenRecord, bool, error) {
 	rt, ok := m.byTokenID[id]
@@ -65,8 +80,8 @@ func (h fakeHasher) VerifyPassword(hash string, password string) (bool, error) {
 
 type fakeJWT struct{}
 
-func (j fakeJWT) IssueAccessToken(userID string, role string) (string, error) {
-	return "access:" + userID + ":" + role, nil
+func (j fakeJWT) IssueAccessToken(userID string) (string, error) {
+	return "access:" + userID + ":moderator", nil
 }
 
 type fakeRandom struct{}
@@ -88,7 +103,6 @@ func TestService_LoginAndRefresh_ModeratorHappyPath(t *testing.T) {
 			Name:         "Alice Moderator",
 			Email:        "mod@example.com",
 			PasswordHash: "hash:P@ssw0rd!",
-			Role:         "moderator",
 			CreatedAt:    now,
 			UpdatedAt:    now,
 		},
@@ -135,7 +149,6 @@ func TestService_Login_WrongPassword(t *testing.T) {
 			Name:         "Alice Moderator",
 			Email:        "mod@example.com",
 			PasswordHash: "hash:correct",
-			Role:         "moderator",
 			CreatedAt:    now,
 			UpdatedAt:    now,
 		},
