@@ -73,16 +73,16 @@ func main() {
 		fatalf("%v", err)
 	}
 
-	fmt.Println("==> create public report")
-	reportID, err := createPublicReport(ctx, httpc, baseURL, "E2E User", "upload via tusd")
+	fmt.Println("==> create upload session")
+	sessionID, err := createUploadSession(ctx, httpc, baseURL)
 	if err != nil {
-		fatalf("create public report: %v", err)
+		fatalf("create upload session: %v", err)
 	}
-	fmt.Printf("report_id=%s\n", reportID)
+	fmt.Printf("upload_session_id=%s\n", sessionID)
 
 	fmt.Println("==> tus create upload")
 	meta := strings.Join([]string{
-		"report_id " + b64(reportID),
+		"upload_session_id " + b64(sessionID),
 		"filename " + b64("screen.png"),
 		"content_type " + b64("image/png"),
 		"idempotency_key " + b64("idem-"+newUUID()),
@@ -101,6 +101,13 @@ func main() {
 	if err := tusPatch(ctx, httpc, uploadURL, []byte{0x89, 0x50, 0x4E, 0x47}); err != nil {
 		fatalf("tus patch: %v", err)
 	}
+
+	fmt.Println("==> create public report")
+	reportID, err := createPublicReport(ctx, httpc, baseURL, "E2E User", "upload via tusd", sessionID)
+	if err != nil {
+		fatalf("create public report: %v", err)
+	}
+	fmt.Printf("report_id=%s\n", reportID)
 
 	fmt.Println("==> wait for finalize (db check)")
 	attID, err := waitAttachmentInDB(ctx, composeFile, reportID, 2*time.Second)
@@ -237,10 +244,38 @@ func waitReady(ctx context.Context, httpc *http.Client, baseURL string, interval
 	}
 }
 
-func createPublicReport(ctx context.Context, httpc *http.Client, baseURL, reporterName, description string) (string, error) {
+func createUploadSession(ctx context.Context, httpc *http.Client, baseURL string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/v1/public/upload-sessions", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := httpc.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return "", fmt.Errorf("unexpected status %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	var out struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(out.ID) == "" {
+		return "", errors.New("no upload session id")
+	}
+	return out.ID, nil
+}
+
+func createPublicReport(ctx context.Context, httpc *http.Client, baseURL, reporterName, description, uploadSessionID string) (string, error) {
 	body, err := json.Marshal(map[string]any{
-		"reporter_name": reporterName,
-		"description":   description,
+		"reporter_name":     reporterName,
+		"description":       description,
+		"upload_session_id": uploadSessionID,
 	})
 	if err != nil {
 		return "", err

@@ -5,7 +5,6 @@ package integration
 import (
 	"context"
 	"testing"
-	"time"
 
 	"bug-report-service/internal/adapters/persistence/postgres"
 	"bug-report-service/internal/adapters/security"
@@ -14,22 +13,9 @@ import (
 	"bug-report-service/internal/application/report"
 )
 
-type fixedClock struct{ t time.Time }
-
-func (c fixedClock) Now() time.Time { return c.t }
-
-type seqRandom struct{ n int }
-
-func (r *seqRandom) NewID() string {
-	r.n++
-	return "id-" + string(rune('0'+r.n))
-}
-func (r *seqRandom) NewToken() (string, error) { return "tok", nil }
-
 func TestIntegration_PublicCreate_AndModeratorNotes(t *testing.T) {
 	db := mustDB(t)
 	ensureSchema(t, db)
-	now := time.Unix(1_700_000_000, 0).UTC()
 
 	// create moderator directly (manual provisioning style)
 	hasher := security.NewBCryptPasswordHasher(4)
@@ -38,23 +24,18 @@ func TestIntegration_PublicCreate_AndModeratorNotes(t *testing.T) {
 		t.Fatalf("hash password: %v", err)
 	}
 	users := postgres.NewModeratorRepository(db)
-	if err := users.Create(context.Background(), ports.UserRecord{
-		ID:           "m1",
+	createdModerator, err := users.Create(context.Background(), ports.UserRecord{
 		Name:         "Alice Moderator",
 		Email:        "mod@example.com",
 		PasswordHash: pw,
-		Role:         "moderator",
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("create moderator: %v", err)
 	}
 
 	reportsRepo := postgres.NewReportRepository(db)
 	reportSvc := report.NewService(report.Deps{
 		Reports: reportsRepo,
-		Clock:   fixedClock{t: now},
-		Random:  &seqRandom{},
 	})
 
 	rep, err := reportSvc.Create(context.Background(), report.CreateRequest{
@@ -69,13 +50,11 @@ func TestIntegration_PublicCreate_AndModeratorNotes(t *testing.T) {
 	noteSvc := note.NewService(note.Deps{
 		Notes:   noteRepo,
 		Reports: reportsRepo,
-		Clock:   fixedClock{t: now.Add(time.Minute)},
-		Random:  &seqRandom{},
 	})
 
 	createdNote, err := noteSvc.Create(context.Background(), note.CreateRequest{
 		ActorRole: "moderator",
-		ActorID:   "m1",
+		ActorID:   createdModerator.ID,
 		ReportID:  rep.ID,
 		Text:      "Investigating",
 	})
