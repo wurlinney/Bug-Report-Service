@@ -16,19 +16,19 @@ func TusCreateGuard(deps Deps) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			if deps.ReportService == nil {
+			if deps.UploadSessionService == nil {
 				writeError(w, http.StatusInternalServerError, "misconfigured", "service misconfigured")
 				return
 			}
 
 			meta := parseTusMetadata(r.Header.Get("Upload-Metadata"))
-			reportID := strings.TrimSpace(meta["report_id"])
-			if reportID == "" {
-				writeError(w, http.StatusBadRequest, "validation_error", "report_id is required in Upload-Metadata")
+			uploadSessionID := strings.TrimSpace(meta["upload_session_id"])
+			if uploadSessionID == "" {
+				writeError(w, http.StatusBadRequest, "validation_error", "upload_session_id is required in Upload-Metadata")
 				return
 			}
 
-			ok, err := deps.ReportService.Exists(r.Context(), reportID)
+			ok, err := deps.UploadSessionService.Exists(r.Context(), uploadSessionID)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "internal_error", "internal error")
 				return

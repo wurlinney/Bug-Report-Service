@@ -14,20 +14,20 @@ func TusPreUploadCreateCallback(deps Deps, maxSize int64, allowedMIMEs map[strin
 		}
 
 		meta := hook.Upload.MetaData
-		reportID := strings.TrimSpace(meta["report_id"])
+		uploadSessionID := strings.TrimSpace(meta["upload_session_id"])
 		filename := strings.TrimSpace(meta["filename"])
 		contentType := strings.TrimSpace(meta["content_type"])
-		if reportID == "" || filename == "" || contentType == "" {
-			return tushandler.HTTPResponse{}, tushandler.FileInfoChanges{}, tushandler.NewError("validation_error", "report_id, filename and content_type are required", http.StatusBadRequest)
+		if uploadSessionID == "" || filename == "" || contentType == "" {
+			return tushandler.HTTPResponse{}, tushandler.FileInfoChanges{}, tushandler.NewError("validation_error", "upload_session_id, filename and content_type are required", http.StatusBadRequest)
 		}
 		if _, ok := allowedMIMEs[contentType]; !ok {
 			return tushandler.HTTPResponse{}, tushandler.FileInfoChanges{}, tushandler.NewError("unsupported_media_type", "unsupported content type", http.StatusBadRequest)
 		}
 
-		if deps.ReportService == nil {
+		if deps.UploadSessionService == nil {
 			return tushandler.HTTPResponse{}, tushandler.FileInfoChanges{}, tushandler.NewError("misconfigured", "service misconfigured", http.StatusInternalServerError)
 		}
-		ok, err := deps.ReportService.Exists(hook.Context, reportID)
+		ok, err := deps.UploadSessionService.Exists(hook.Context, uploadSessionID)
 		if err != nil {
 			return tushandler.HTTPResponse{}, tushandler.FileInfoChanges{}, tushandler.NewError("internal_error", "internal error", http.StatusInternalServerError)
 		}
