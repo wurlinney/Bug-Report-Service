@@ -1,8 +1,0 @@
-package security
-
-import "time"
-
-// RealClock implements ports.Clock.
-type RealClock struct{}
-
-func (RealClock) Now() time.Time { return time.Now().UTC() }
