@@ -1,0 +1,575 @@
+openapi: 3.0.3
+info:
+  title: bug-report-service API
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: Health
+  - name: Public
+  - name: Moderator Auth
+  - name: Moderator Reports
+  - name: Uploads (tus)
+security:
+  - bearerAuth: []
+
+paths:
+  /healthz:
+    get:
+      tags: [Health]
+      summary: Health check
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+
+  /livez:
+    get:
+      tags: [Health]
+      summary: Liveness check
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+
+  /readyz:
+    get:
+      tags: [Health]
+      summary: Readiness check
+      security: []
+      responses:
+        "200":
+          description: Ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyResponse"
+        "503":
+          description: Not ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyResponse"
+
+  /api/v1/public/reports:
+    post:
+      tags: [Public]
+      summary: Create public bug report
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublicCreateReportRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicCreateReportResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/public/upload-sessions:
+    post:
+      tags: [Public]
+      summary: Create upload session for pre-submit attachments
+      security: []
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadSession"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/uploads:
+    post:
+      tags: [Uploads (tus)]
+      summary: Create resumable upload (tus)
+      security: []
+      description: |
+        tus protocol endpoint. Use `Upload-Metadata` with keys:
+        - `upload_session_id` (base64)
+        - `filename` (base64)
+        - `content_type` (base64)
+        - `idempotency_key` (base64, optional)
+      parameters:
+        - name: Tus-Resumable
+          in: header
+          required: true
+          schema: { type: string, example: "1.0.0" }
+        - name: Upload-Length
+          in: header
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: Upload-Metadata
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        "201":
+          description: Upload created
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          description: File too large
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/uploads/{uploadId}:
+    patch:
+      tags: [Uploads (tus)]
+      summary: Upload chunk (tus)
+      security: []
+      parameters:
+        - name: uploadId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: Tus-Resumable
+          in: header
+          required: true
+          schema: { type: string, example: "1.0.0" }
+        - name: Upload-Offset
+          in: header
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/offset+octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "204":
+          description: Chunk accepted
+
+  /api/v1/mod/auth/login:
+    post:
+      tags: [Moderator Auth]
+      summary: Moderator login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Logged in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/mod/auth/refresh:
+    post:
+      tags: [Moderator Auth]
+      summary: Moderator refresh token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          description: Refreshed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/mod/me:
+    get:
+      tags: [Moderator Auth]
+      summary: Current moderator profile
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModeratorProfile"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/mod/reports:
+    get:
+      tags: [Moderator Reports]
+      summary: List reports
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+        - $ref: "#/components/parameters/SortBy"
+        - $ref: "#/components/parameters/SortDesc"
+        - $ref: "#/components/parameters/Status"
+        - $ref: "#/components/parameters/CreatedFrom"
+        - $ref: "#/components/parameters/CreatedTo"
+        - $ref: "#/components/parameters/ReporterName"
+        - $ref: "#/components/parameters/Q"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/mod/reports/{id}:
+    get:
+      tags: [Moderator Reports]
+      summary: Get report by id
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Report"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/mod/reports/{id}/status:
+    patch:
+      tags: [Moderator Reports]
+      summary: Change report status
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangeStatusRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/mod/reports/{id}/notes:
+    get:
+      tags: [Moderator Reports]
+      summary: List internal notes
+      parameters:
+        - $ref: "#/components/parameters/ID"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoteListResponse"
+    post:
+      tags: [Moderator Reports]
+      summary: Create internal note
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateNoteRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalNote"
+
+  /api/v1/mod/reports/{id}/attachments:
+    get:
+      tags: [Moderator Reports]
+      summary: List report attachments
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttachmentListResponse"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    ID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, format: int32, minimum: 1, maximum: 100 }
+    Offset:
+      name: offset
+      in: query
+      schema: { type: integer, format: int32, minimum: 0 }
+    SortBy:
+      name: sort_by
+      in: query
+      schema: { type: string, enum: [created_at, updated_at] }
+    SortDesc:
+      name: sort_desc
+      in: query
+      schema: { type: boolean }
+    Status:
+      name: status
+      in: query
+      schema: { type: string, enum: [new, in_review, resolved, rejected] }
+    CreatedFrom:
+      name: created_from
+      in: query
+      schema: { type: integer, format: int64 }
+    CreatedTo:
+      name: created_to
+      in: query
+      schema: { type: integer, format: int64 }
+    ReporterName:
+      name: reporter_name
+      in: query
+      schema: { type: string }
+    Q:
+      name: q
+      in: query
+      schema: { type: string }
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    InternalError:
+      description: Internal error
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    TooManyRequests:
+      description: Too many requests
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string }
+            message: { type: string }
+
+    ReadyResponse:
+      type: object
+      properties:
+        ready: { type: boolean }
+        deps:
+          type: object
+          additionalProperties: { type: boolean }
+        state: { type: string }
+
+    PublicCreateReportRequest:
+      type: object
+      required: [reporter_name]
+      properties:
+        reporter_name: { type: string }
+        description: { type: string }
+        upload_session_id: { type: string }
+
+    UploadSession:
+      type: object
+      properties:
+        id: { type: string }
+        created_at: { type: integer, format: int64 }
+
+    PublicCreateReportResponse:
+      allOf:
+        - $ref: "#/components/schemas/Report"
+        - type: object
+          properties:
+            message: { type: string, example: "Ваше обращение принято в работу" }
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8 }
+
+    RefreshRequest:
+      type: object
+      required: [refresh_token_id, refresh_token]
+      properties:
+        refresh_token_id: { type: string }
+        refresh_token: { type: string }
+
+    AuthResponse:
+      type: object
+      properties:
+        access_token: { type: string }
+        refresh_token_id: { type: string }
+        refresh_token: { type: string }
+
+    ModeratorProfile:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        email: { type: string }
+        created_at: { type: integer, format: int64 }
+        updated_at: { type: integer, format: int64 }
+
+    Report:
+      type: object
+      properties:
+        id: { type: string }
+        reporter_name: { type: string }
+        description: { type: string }
+        status: { type: string }
+        created_at: { type: integer, format: int64 }
+        updated_at: { type: integer, format: int64 }
+
+    ReportListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Report" }
+        total: { type: integer, format: int32 }
+
+    ChangeStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [new, in_review, resolved, rejected]
+
+    CreateNoteRequest:
+      type: object
+      required: [text]
+      properties:
+        text: { type: string }
+
+    InternalNote:
+      type: object
+      properties:
+        id: { type: string }
+        report_id: { type: string }
+        author_moderator_id: { type: string }
+        text: { type: string }
+        created_at: { type: integer, format: int64 }
+
+    NoteListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/InternalNote" }
+        total: { type: integer, format: int32 }
+
+    Attachment:
+      type: object
+      properties:
+        id: { type: string }
+        report_id: { type: string }
+        file_name: { type: string }
+        content_type: { type: string }
+        file_size: { type: integer, format: int64 }
+        storage_key: { type: string }
+        created_at: { type: integer, format: int64 }
+        download_url: { type: string }
+
+    AttachmentListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Attachment" }
